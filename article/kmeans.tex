@@ -1,0 +1,81 @@
+\documentclass[11pt, journal]{IEEEtran}
+
+\usepackage{lipsum}
+\usepackage[T1]{fontenc}
+\usepackage{fouriernc}
+\usepackage{cases}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[noadjust]{cite}
+\usepackage{hyperref}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{adjustbox}
+\usepackage{makecell}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{tikz}
+\usepackage{lipsum}
+\usepackage{listings}
+\usepackage{fontawesome5}
+\usepackage{tcolorbox}
+\usepackage[dvipsnames]{xcolor}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    anchorcolor=blue,
+    urlcolor=blue,
+    citecolor=blue
+}
+
+\newcommand{\eq}{\; = \;}
+%\newcommand{\text}[1]{\mbox{\footnotesize #1}}
+\newcommand{\nl}{
+
+\medskip
+
+}
+\newcommand{\centered}[2]{\begin{tabular}{#1} #2 \end{tabular}}
+
+\lstdefinestyle{standstyle}{
+    %backgroundcolor=\color{backcolour!05},
+    basicstyle=\ttfamily\linespread{1}\scriptsize\color{black!80},
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=none,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=4,
+}
+
+\lstset{style=standstyle}
+
+\DeclareMathAlphabet{\mathcal}{OMS}{zplm}{m}{n}
+
+\title{Parallel Implementation of $k$-means}
+\author{Leonardo Biason ($2045751$) \quad Alessandro Romania ($2046144$)}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+    TO-DO
+\end{abstract}
+
+\begin{keywords}
+    Sapienza, ACSAI
+\end{keywords}
+\nl
+\begin{tcolorbox}[colback = Purple!20, colframe = Purple!40]
+    \begin{center}
+        \faIcon{github} Check our repository \href{https://www.github.com/ElBi21/PSEM-kmeans}{on GitHub}
+        \verb|ElBi21/PSEM-kmeans|
+    \end{center}
+\end{tcolorbox}
+
+\end{document}

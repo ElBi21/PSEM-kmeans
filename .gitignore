@@ -1,6 +1,11 @@
+# CUDA
 *.i
 *.ii
 *.gpu
 *.ptx
 *.cubin
 *.fatbin
+
+# LaTeX
+*.log
+*.synctex.gz
