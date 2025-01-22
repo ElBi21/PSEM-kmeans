@@ -9,3 +9,7 @@
 # LaTeX
 *.log
 *.synctex.gz
+
+# Outputs
+*.out
+/out

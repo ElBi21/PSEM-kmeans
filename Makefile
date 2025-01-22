@@ -15,7 +15,7 @@ MPICC=mpicc
 CUDACC=nvcc
 
 # Flags for optimization and libs
-FLAGS=-O3 -Wall
+FLAGS=-O3 -Wall -fno-omit-frame-pointer
 LIBS=-lm
 
 # Targets to build
@@ -41,16 +41,16 @@ help:
 all: $(OBJS)
 
 KMEANS_seq: KMEANS.c
-	$(CC) $(FLAGS) $(DEBUG) $< $(LIBS) -o $@
+	$(CC) $(FLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
 KMEANS_omp: KMEANS_omp.c
-	$(CC) $(FLAGS) $(DEBUG) $(OMPFLAG) $< $(LIBS) -o $@
+	$(CC) $(FLAGS) $(DEBUG) $(OMPFLAG) $< $(LIBS) -o $@.out
 
 KMEANS_mpi: KMEANS_mpi.c
-	$(MPICC) $(FLAGS) $(DEBUG) $< $(LIBS) -o $@
+	$(MPICC) $(FLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
 KMEANS_cuda: KMEANS_cuda.cu
-	$(CUDACC) $(DEBUG) $< $(LIBS) -o $@
+	$(CUDACC) $(DEBUG) $< $(LIBS) -o $@.out
 
 
 # Remove the target files
@@ -60,4 +60,3 @@ clean:
 # Compile in debug mode
 debug:
 	make DEBUG="-DDEBUG -g" FLAGS= all
-
