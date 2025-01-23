@@ -19,6 +19,10 @@
 \usepackage{fontawesome5}
 \usepackage{tcolorbox}
 \usepackage[dvipsnames]{xcolor}
+\usepackage[ruled]{algorithm2e}
+%\usepackage{biblatex}
+
+%\addbibresource{bibliography.bib}
 
 \hypersetup{
     colorlinks=true,
@@ -30,7 +34,7 @@
 
 \newcommand{\eq}{\; = \;}
 %\newcommand{\text}[1]{\mbox{\footnotesize #1}}
-\newcommand{\nl}{
+\newcommand{\nwl}{
 
 \medskip
 
@@ -55,27 +59,110 @@
 \lstset{style=standstyle}
 
 \DeclareMathAlphabet{\mathcal}{OMS}{zplm}{m}{n}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
 
-\title{Parallel Implementation of $k$-means}
-\author{Leonardo Biason ($2045751$) \quad Alessandro Romania ($2046144$)}
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+\newcommand\commentalg[1]{\textcolor{ForestGreen}{{\footnotesize #1}}}
+\SetCommentSty{commentalg}
+
+\title{$k$-means Is All You Need}
+\author{Leonardo Biason ($2045751$) \quad Alessandro Romania ($2046144$) \quad Davide De Blasio ($2082600$)}
 
 \begin{document}
 
 \maketitle
 
 \begin{abstract}
-    TO-DO
+    The $k$-means algorithm is a well known clustering algorithm, which is often used in unsupervised learning settings. However, the algorithm requires to perform multiple times the same operation on the data, and it can greatly benefit from a parallel implementation, so that to maximize the throughput and reduce computation times. With this project, we propose some possible implementations, based on some libraries that are considered to be the \text{de-facto} standard when it comes to writing multithreaded or parallel code, and we will discuss also the results of such implementations
 \end{abstract}
 
 \begin{keywords}
-    Sapienza, ACSAI
+    Sapienza, ACSAI, Multicore Programming
 \end{keywords}
-\nl
+\nwl
 \begin{tcolorbox}[colback = Purple!20, colframe = Purple!40]
     \begin{center}
         \faIcon{github} Check our repository \href{https://www.github.com/ElBi21/PSEM-kmeans}{on GitHub}
         \verb|ElBi21/PSEM-kmeans|
     \end{center}
 \end{tcolorbox}
+
+\section{Introduction}
+
+When talking about clustering and unsupervised learning, it's quite common to hear about the $k$-means algorithm, and for good reasons: it allows to efficiently cluster a dataset of $d$ dimensions, and it employs the notion of convergence in order to do so. This, computationally speaking, means to repeat some operations over and over again until some stopping conditions are met.
+
+\nwl
+
+The algorithm is not perfect though, and presents some issues:
+\begin{itemize}
+    \item [1)] the algorithm is fast in clustering, but we cannot be certain that it clusters \textit{well};
+    \item [2)] the algorithm doesn't work with non-linear clusters;
+    \item [3)] the initialization can make a great impact in the final result.
+\end{itemize}
+\nwl
+Many people prefer to use other clustering methods, such as the fitting of Gaussian Mixture Models. Albeit not being perfect, $k$-means still works well in simple, linear clusters. For the sake of this project, we are going to consider a vanilla $k$-means algorithm with Lloyd's initialization (the first $k$ centroids will be selected randomly).
+
+\subsection{Algorithm structure}
+
+The $k$-means algorithm can be described with the following pseudocode, where $X$ is the set of data points, $C = \{\mu_1, \; \mu_2, \; ..., \; \mu_k \}$ is the set of centroids and $Y$ is the set of assignments:
+
+\begin{algorithm}
+    \LinesNumbered
+    \tcp{Initialize the centroids}
+    \For{$k$ in $[1, \; |C|]$}{
+        $\mu_k \gets \text{a random location in the input space}$
+    }
+    \BlankLine
+    \While{$\text{convergence hasn't been reached}$}{
+        \tcp{Assign each point to a cluster}
+        \For{$i$ in $[1, \; |X|]$}{
+            $y_i \gets \argmin_k \left(\norm{\mu_k - x_i}\right)$ 
+        }
+        \BlankLine
+        \tcp{Compute the new position of each centroid}
+        \For{$k$ in $[1, \; |C|]$}{
+            $\mu_k \gets \textsc{Mean}(\{ \; x_n : z_n = k \; \})$
+        }
+    }
+    \tcp{Return the centroids}
+    \Return $Y$
+
+    \caption{$k$-means (Lloyd's initialization)}\label{alg:kmeans}
+\end{algorithm}
+
+The algorithm consists of 4 main blocks:
+\begin{itemize}
+    \item the \textbf{initialization block}, where all the centroids will receive a starting, random position (as per Lloyd's method);
+    \item the \textbf{assignment block}, where the Euclidean distance between a point and all centroids is computed, for all centroids. The point will be assigned to a cluster depending on the following operation:
+    \[ \argmin_k \left(\norm{\mu_k - x_i}\right) \]
+
+    \item the \textbf{update block}, where the position of the centroids is updated, and the new position of a centroid $\mu_k$ is equal to the mean of all the data points positions belonging to cluster $k$
+\end{itemize}
+
+\subsection{Sequential Code Bottlenecks}
+
+As we can see from Algorithm \ref{alg:kmeans}, we have two main blocks that may cause the bottlenecks: in the \textbf{assignment block} and in the \textbf{update block}.
+\nwl
+The first \textbf{for} block in the initialization step does not represent a major bottleneck since it just needs to assign a random location to each of the $K$ centroids. It can be parallelized, but it won't help as much as parallelizing the two steps mentioned before
+
+\section{Parallelizing with MPI}
+
+\section{Parallelizing with OpenMP}
+
+\section{Parallelizing with CUDA}
+
+\section{Interlacing Multi-processing with Multi-threading}
+
+\subsection{MPI and OpenMP}
+\subsection{MPI and CUDA}
+
+\section{Performance Analysis}
+
+\section{Conclusions}
+
+%\cite{7780459}
+
+%\printbibliography
 
 \end{document}
