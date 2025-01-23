@@ -219,13 +219,38 @@ void zeroIntArray(int *array, int size)
 }
 
 
+/* 
+ *		CUDA Kernels and Variables
+ */
+
+__global__ void euclidean_distance() {
+	__shared__ float distance;
+	atomicAdd(*distance, )
+
+	/*
+	float dist = 0.0;
+	for(int i = 0; i < samples; i++) {
+		dist+= (point[i] - center[i]) * (point[i] - center[i]);
+	}
+	dist = sqrt(dist);
+	return(dist);
+	*/
+}
+
+
 
 int main(int argc, char* argv[])
 {
 
 	//START CLOCK***************************************
-	double start, end;
-	start = omp_get_wtime();
+	#ifdef _OPEN_MP
+		double start, end;
+		start = omp_get_wtime();
+	#else
+		clock_t start, end;
+		start = clock();
+	#endif
+
 	//**************************************************
 	/*
 	* PARAMETERS
@@ -293,8 +318,8 @@ int main(int argc, char* argv[])
 	// Initial centrodis
 	srand(0);
 	int i;
-	for(i=0; i<K; i++) 
-		centroidPos[i]=rand()%lines;
+	for(i = 0; i < K; i++) 
+		centroidPos[i] = rand() % lines;
 	
 	// Loading the array of initial centroids with the data from the array data
 	// The centroids are points stored in the data array.
@@ -308,7 +333,11 @@ int main(int argc, char* argv[])
 	printf("\tMaximum centroid precision: %f\n", maxThreshold);
 	
 	//END CLOCK*****************************************
-	end = omp_get_wtime();
+	#ifdef _OPEN_MP
+		end = omp_get_wtime();
+	#else
+		end = clock();
+	#endif
 	printf("\nMemory allocation: %f seconds\n", end - start);
 	fflush(stdout);
 
@@ -316,13 +345,17 @@ int main(int argc, char* argv[])
 	CHECK_CUDA_CALL( cudaDeviceSynchronize() );
 	//**************************************************
 	//START CLOCK***************************************
-	start = omp_get_wtime();
+	#ifdef _OPEN_MP
+		start = omp_get_wtime();
+	#else
+		start = clock();
+	#endif
 	//**************************************************
 	char *outputMsg = (char *)calloc(10000,sizeof(char));
 	char line[100];
 
 	int j;
-	int class;
+	int classInt;
 	float dist, minDist;
 	int it=0;
 	int changes = 0;
@@ -345,66 +378,63 @@ int main(int argc, char* argv[])
  *
  */
 
-	do{
+	// Make array of distances
+	//__shared__ float distances;
+
+	do {
 		it++;
 	
 		//1. Calculate the distance from each point to the centroid
 		//Assign each point to the nearest centroid.
 		changes = 0;
-		for(i=0; i<lines; i++)
-		{
-			class=1;
-			minDist=FLT_MAX;
-			for(j=0; j<K; j++)
-			{
-				dist=euclideanDistance(&data[i*samples], &centroids[j*samples], samples);
+		for (i = 0; i < lines; i++) {
+			classInt = 1;
+			minDist = FLT_MAX;
+			for (j = 0; j < K; j++) {
+				dist = euclideanDistance(&data[i * samples], &centroids[j * samples], samples);
 
-				if(dist < minDist)
-				{
-					minDist=dist;
-					class=j+1;
+				if (dist < minDist) {
+					minDist = dist;
+					classInt = j + 1;
 				}
 			}
-			if(classMap[i]!=class)
-			{
+			if (classMap[i] != classInt) {
 				changes++;
 			}
-			classMap[i]=class;
+			classMap[i] = classInt;
 		}
 
 		// 2. Recalculates the centroids: calculates the mean within each cluster
-		zeroIntArray(pointsPerClass,K);
-		zeroFloatMatriz(auxCentroids,K,samples);
+		zeroIntArray(pointsPerClass, K);
+		zeroFloatMatriz(auxCentroids, K, samples);
 
-		for(i=0; i<lines; i++) 
-		{
-			class=classMap[i];
-			pointsPerClass[class-1] = pointsPerClass[class-1] +1;
-			for(j=0; j<samples; j++){
-				auxCentroids[(class-1)*samples+j] += data[i*samples+j];
+		for (i = 0; i < lines; i++) {
+			classInt = classMap[i];
+			pointsPerClass[classInt - 1] = pointsPerClass[classInt - 1] +1;
+			for (j = 0; j < samples; j++) {
+				auxCentroids[(classInt - 1) * samples + j] += data[i * samples + j];
 			}
 		}
 
-		for(i=0; i<K; i++) 
-		{
-			for(j=0; j<samples; j++){
-				auxCentroids[i*samples+j] /= pointsPerClass[i];
+		for (i = 0; i < K; i++) {
+			for (j = 0; j < samples; j++){
+				auxCentroids[i * samples + j] /= pointsPerClass[i];
 			}
 		}
 		
-		maxDist=FLT_MIN;
-		for(i=0; i<K; i++){
-			distCentroids[i]=euclideanDistance(&centroids[i*samples], &auxCentroids[i*samples], samples);
-			if(distCentroids[i]>maxDist) {
-				maxDist=distCentroids[i];
+		maxDist = FLT_MIN;
+		for (i = 0; i < K; i++) {
+			distCentroids[i] = euclideanDistance(&centroids[i * samples], &auxCentroids[i * samples], samples);
+			if (distCentroids[i] > maxDist) {
+				maxDist = distCentroids[i];
 			}
 		}
-		memcpy(centroids, auxCentroids, (K*samples*sizeof(float)));
+		memcpy(centroids, auxCentroids, (K * samples * sizeof(float)));
 		
 		sprintf(line,"\n[%d] Cluster changes: %d\tMax. centroid distance: %f", it, changes, maxDist);
 		outputMsg = strcat(outputMsg,line);
 
-	} while((changes>minChanges) && (it<maxIterations) && (maxDist>maxThreshold));
+	} while((changes > minChanges) && (it < maxIterations) && (maxDist > maxThreshold));
 
 /*
  *
@@ -417,12 +447,20 @@ int main(int argc, char* argv[])
 	CHECK_CUDA_CALL( cudaDeviceSynchronize() );
 
 	//END CLOCK*****************************************
-	end = omp_get_wtime();
+	#ifdef _OPEN_MP
+		end = omp_get_wtime();
+	#else
+		end = clock();
+	#endif
 	printf("\nComputation: %f seconds", end - start);
 	fflush(stdout);
 	//**************************************************
 	//START CLOCK***************************************
-	start = omp_get_wtime();
+	#ifdef _OPEN_MP
+		start = omp_get_wtime();
+	#else
+		start = clock();
+	#endif
 	//**************************************************
 
 	
@@ -455,7 +493,11 @@ int main(int argc, char* argv[])
 	free(auxCentroids);
 
 	//END CLOCK*****************************************
-	end = omp_get_wtime();
+	#ifdef _OPEN_MP
+		end = omp_get_wtime();
+	#else
+		end = clock();
+	#endif
 	printf("\n\nMemory deallocation: %f seconds\n", end - start);
 	fflush(stdout);
 	//***************************************************/
