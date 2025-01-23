@@ -13,3 +13,4 @@
 # Outputs
 *.out
 /out
+output_*.txt
