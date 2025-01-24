@@ -168,15 +168,16 @@ void initCentroids(const float *data, float *centroids, int *centroidPos, int sa
 Function euclideanDistance: Euclidean distance
 This function could be modified
 */
-float euclideanDistance(float *point, float *center, int samples)
+static inline float euclideanDistance(float *point, float *center, int samples)
 {
 	float dist = 0.0;
 	#pragma omp simd reduction(+ : dist) // usare omp parallel creerebbe un overhead inutile, essendo molti punti
 	for (int i = 0; i < samples; i++)
 	{
-		dist += (point[i] - center[i]) * (point[i] - center[i]);
+		float diff = point[i] - center[i];
+        dist += diff * diff;	
 	}
-	return (dist);
+	return dist;  //squared distances
 }
 
 /*
@@ -186,7 +187,7 @@ This function could be modified
 void zeroFloatMatriz(float *matrix, int rows, int columns)
 {
 	int total = rows * columns;
-#pragma omp parallel for
+	#pragma omp parallel for
 	for (int i = 0; i < total; i++)
 	{
 		matrix[i] = 0.0f;
@@ -200,14 +201,14 @@ This function could be modified
 void zeroIntArray(int *array, int size)
 {
 	int i;
-#pragma omp parallel for
+	#pragma omp parallel for
 	for (i = 0; i < size; i++)
 		array[i] = 0;
 }
 
 int main(int argc, char *argv[])
 {
-
+	omp_set_num_threads(8);
 	// START CLOCK***************************************
 	double start, end;
 	start = omp_get_wtime();
@@ -340,7 +341,7 @@ int main(int argc, char *argv[])
 		{
 		// Parallelize the main loop over the points.
         // Each thread processes a subset of points, determining the closest centroid for each.
-		#pragma omp for schedule(dynamic, 10)
+		#pragma omp for schedule(dynamic, 100)
 			for (i = 0; i < lines; i++)
 			{
 				class = 1;
@@ -423,10 +424,10 @@ int main(int argc, char *argv[])
 			reduction(max : maxDist)
 		for (i = 0; i < K; i++)
 		{
-			 float distSq = euclideanDistance(&centroids[i * samples],
+			float distSq = euclideanDistance(&centroids[i * samples],
                                              &auxCentroids[i * samples],
                                              samples);
-            distCentroids[i] = sqrt(distSq);
+			distCentroids[i] = distSq; 
 
 			if (distCentroids[i] > maxDist)
 			{
@@ -440,7 +441,7 @@ int main(int argc, char *argv[])
 		sprintf(line, "\n[%d] Cluster changes: %d\tMax. centroid distance: %f", it, changes, maxDist);
 		outputMsg = strcat(outputMsg, line);
 
-	} while ((changes > minChanges) && (it < maxIterations) && (maxDist > maxThreshold));
+	} while ((changes > minChanges) && (it < maxIterations) && (maxDist > (maxThreshold*maxThreshold)));
 	/*
 	 *
 	 * STOP HERE: DO NOT CHANGE THE CODE BELOW THIS POINT
