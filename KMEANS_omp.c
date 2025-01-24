@@ -300,7 +300,7 @@ int main(int argc, char *argv[])
 	// START CLOCK***************************************
 	start = omp_get_wtime();
 	//**************************************************
-	char *outputMsg = (char *)calloc(10000, sizeof(char));
+	char *outputMsg = (char *)calloc(100000, sizeof(char));
 	char line[100];
 
 	int j;
@@ -408,6 +408,7 @@ int main(int argc, char *argv[])
 		memcpy(centroids, auxCentroids, (K * samples * sizeof(float)));
 
 		sprintf(line, "\n[%d] Cluster changes: %d\tMax. centroid distance: %f", it, changes, maxDist);
+		outputMsg = strcat(outputMsg, line);
 
 	} while ((changes > minChanges) && (it < maxIterations) && (maxDist > (maxThreshold * maxThreshold)));
 	/*
