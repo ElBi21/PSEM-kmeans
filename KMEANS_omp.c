@@ -338,29 +338,27 @@ int main(int argc, char *argv[])
 	shared(data, centroids, classMap, lines, samples, K) private(i, j, dist, minDist, class) \
 	reduction(+ : changes)                                                                   \
 	schedule(dynamic, 100)
+		// Parallelize the main loop over the points.
+		// Each thread processes a subset of points, determining the closest centroid for each.
+		for (i = 0; i < lines; i++)
 		{
-			// Parallelize the main loop over the points.
-			// Each thread processes a subset of points, determining the closest centroid for each.
-			for (i = 0; i < lines; i++)
+			class = 1;
+			minDist = FLT_MAX;
+			// Find the nearest centroid
+			for (j = 0; j < K; j++)
 			{
-				class = 1;
-				minDist = FLT_MAX;
-				// Find the nearest centroid
-				for (j = 0; j < K; j++)
+				dist = euclideanDistance(&data[i * samples], &centroids[j * samples], samples);
+				if (dist < minDist)
 				{
-					dist = euclideanDistance(&data[i * samples], &centroids[j * samples], samples);
-					if (dist < minDist)
-					{
-						minDist = dist;
-						class = j + 1;
-					}
+					minDist = dist;
+					class = j + 1;
 				}
-				if (classMap[i] != class)
-				{
-					changes++;
-				}
-				classMap[i] = class;
 			}
+			if (classMap[i] != class)
+			{
+				changes++;
+			}
+			classMap[i] = class;
 		}
 
 		// 2. Recalculates the centroids: calculates the mean within each cluster
