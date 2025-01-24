@@ -171,12 +171,11 @@ This function could be modified
 float euclideanDistance(float *point, float *center, int samples)
 {
 	float dist = 0.0;
-#pragma omp simd reduction(+ : dist) // usare omp parallel creerebbe un overhead inutile, essendo molti punti
+	#pragma omp simd reduction(+ : dist) // usare omp parallel creerebbe un overhead inutile, essendo molti punti
 	for (int i = 0; i < samples; i++)
 	{
 		dist += (point[i] - center[i]) * (point[i] - center[i]);
 	}
-	dist = sqrt(dist);
 	return (dist);
 }
 
@@ -335,12 +334,13 @@ int main(int argc, char *argv[])
 		// Assign each point to the nearest centroid.
 		changes = 0;
 		#pragma omp parallel default(none)                                                           \
-			shared(data, centroids, classMap, lines, samples, K) private(i, j, dist, minDist, class) \
+			shared(data, centroids, classMap, lines, samples, K) \
+			private(i, j, dist, minDist, class) \
 			reduction(+ : changes)
 		{
 		// Parallelize the main loop over the points.
         // Each thread processes a subset of points, determining the closest centroid for each.
-		#pragma omp for schedule(static)
+		#pragma omp for schedule(dynamic, 10)
 			for (i = 0; i < lines; i++)
 			{
 				class = 1;
@@ -369,7 +369,8 @@ int main(int argc, char *argv[])
 
     	// We accumulate partial sums in parallel to avoid race conditions:
 		#pragma omp parallel default(none) \
-			shared(lines, classMap, data, pointsPerClass, auxCentroids, samples, K) private(i, j, class)
+			shared(lines, classMap, data, pointsPerClass, auxCentroids, samples, K) \
+			private(i, j, class)
 		{
         	// Thread-local arrays to avoid race conditions when updating global arrays
 			int *localPointsPerClass = (int *)calloc(K, sizeof(int)); // Local count
@@ -404,7 +405,7 @@ int main(int argc, char *argv[])
 		}
 
 		// Calculate the mean for each centroid (divide sums by counts)
-		#pragma omp parallel for private(j) default(none) \
+		#pragma omp parallel for schedule(static) private(j) default(none) \
 			shared(auxCentroids, pointsPerClass, samples, K)
 		for (i = 0; i < K; i++)
 		{
@@ -417,10 +418,16 @@ int main(int argc, char *argv[])
 		// Compute the maximum distance between old and new centroids
 		maxDist = 0.0f;
 		#pragma omp parallel for default(none) \
-			shared(centroids, auxCentroids, distCentroids, samples, K) private(i) reduction(max : maxDist)
+			shared(centroids, auxCentroids, distCentroids, samples, K) \
+			private(i, dist) \
+			reduction(max : maxDist)
 		for (i = 0; i < K; i++)
 		{
-			distCentroids[i] = euclideanDistance(&centroids[i * samples], &auxCentroids[i * samples], samples);
+			 float distSq = euclideanDistance(&centroids[i * samples],
+                                             &auxCentroids[i * samples],
+                                             samples);
+            distCentroids[i] = sqrt(distSq);
+
 			if (distCentroids[i] > maxDist)
 			{
 				maxDist = distCentroids[i];
