@@ -35,11 +35,12 @@
  * Macros to show errors when calling a CUDA library function,
  * or after launching a kernel
  */
-#define CHECK_CUDA_CALL( a )	{ \
+#define CHECK_CUDA_CALL(a) { \
 	cudaError_t ok = a; \
 	if ( ok != cudaSuccess ) \
 		fprintf(stderr, "-- Error CUDA call in line %d: %s\n", __LINE__, cudaGetErrorString( ok ) ); \
 	}
+
 #define CHECK_CUDA_LAST()	{ \
 	cudaError_t ok = cudaGetLastError(); \
 	if ( ok != cudaSuccess ) \
@@ -173,10 +174,9 @@ void initCentroids(const float *data, float* centroids, int* centroidPos, int sa
 {
 	int i;
 	int idx;
-	for(i=0; i<K; i++)
-	{
+	for(i = 0; i < K; i++) {
 		idx = centroidPos[i];
-		memcpy(&centroids[i*samples], &data[idx*samples], (samples*sizeof(float)));
+		memcpy(&centroids[i * samples], &data[idx * samples], (samples * sizeof(float)));
 	}
 }
 
@@ -223,18 +223,18 @@ void zeroIntArray(int *array, int size)
  *		CUDA Kernels and Variables
  */
 
-__global__ void euclidean_distance() {
+__global__ void euclidean_distance(int* data, int* centroids, int point_i, int centroid_i, float* distance_address) {
 	__shared__ float distance;
-	atomicAdd(*distance, )
+	int selected_point = point_i * blockDim.x + threadIdx.x;
+	int selected_centroid = centroid_i * blockDim.x + threadIdx.x;
+	int to_sum = (data[selected_point] - centroids[selected_centroid]) * (data[selected_point] - centroids[selected_centroid]);
+	atomicAdd(&distance, to_sum);
+	distance_address = &distance;
+}
 
-	/*
-	float dist = 0.0;
-	for(int i = 0; i < samples; i++) {
-		dist+= (point[i] - center[i]) * (point[i] - center[i]);
-	}
-	dist = sqrt(dist);
-	return(dist);
-	*/
+
+__global__ void assignment_step() {
+	// Do kernel for assignment
 }
 
 
@@ -286,9 +286,8 @@ int main(int argc, char* argv[])
 		exit(error);
 	}
 	
-	float *data = (float*)calloc(lines*samples,sizeof(float));
-	if (data == NULL)
-	{
+	float *data = (float*) calloc(lines * samples, sizeof(float));
+	if (data == NULL) {
 		fprintf(stderr,"Memory allocation error.\n");
 		exit(-4);
 	}
@@ -300,18 +299,18 @@ int main(int argc, char* argv[])
 	}
 
 	// Parameters
-	int K=atoi(argv[2]); 
-	int maxIterations=atoi(argv[3]);
-	int minChanges= (int)(lines*atof(argv[4])/100.0);
-	float maxThreshold=atof(argv[5]);
+	int K = atoi(argv[2]); 
+	int maxIterations = atoi(argv[3]);
+	int minChanges = (int) (lines * atof(argv[4]) / 100.0);
+	float maxThreshold = atof(argv[5]);
 
-	int *centroidPos = (int*)calloc(K,sizeof(int));
-	float *centroids = (float*)calloc(K*samples,sizeof(float));
-	int *classMap = (int*)calloc(lines,sizeof(int));
+	int *centroidPos = (int*) calloc(K, sizeof(int));
+	float *centroids = (float*) calloc(K * samples, sizeof(float));
+	int *classMap = (int*) calloc(lines, sizeof(int));
 
     if (centroidPos == NULL || centroids == NULL || classMap == NULL)
 	{
-		fprintf(stderr,"Memory allocation error.\n");
+		fprintf(stderr, "Memory allocation error.\n");
 		exit(-4);
 	}
 
@@ -351,7 +350,7 @@ int main(int argc, char* argv[])
 		start = clock();
 	#endif
 	//**************************************************
-	char *outputMsg = (char *)calloc(10000,sizeof(char));
+	char *outputMsg = (char *)calloc(100000,sizeof(char));
 	char line[100];
 
 	int j;
@@ -363,9 +362,9 @@ int main(int argc, char* argv[])
 
 	//pointPerClass: number of points classified in each class
 	//auxCentroids: mean of the points in each class
-	int *pointsPerClass = (int *)malloc(K*sizeof(int));
-	float *auxCentroids = (float*)malloc(K*samples*sizeof(float));
-	float *distCentroids = (float*)malloc(K*sizeof(float)); 
+	int *pointsPerClass = (int *) malloc(K * sizeof(int));
+	float *auxCentroids = (float*) malloc(K * samples * sizeof(float));
+	float *distCentroids = (float*) malloc(K * sizeof(float)); 
 	if (pointsPerClass == NULL || auxCentroids == NULL || distCentroids == NULL)
 	{
 		fprintf(stderr,"Memory allocation error.\n");
@@ -378,9 +377,43 @@ int main(int argc, char* argv[])
  *
  */
 
+	// Each block processes 1 point, in 
+	dim3 point_block(samples, 1, 1);
+	dim3 grid_points(10, 10);	
+
+	int data_size = lines * samples * sizeof(float);
+	int centroids_size = K * samples * sizeof(float);
+	int* gpu_data;
+	int* gpu_centroids;
+	// int* gpu_dist_centroids;
+
+	printf("Moving %dB of data and %dB of centroids\n", data_size, centroids_size);
+
+	for (int i = 0; i < 30; i++) {
+		printf("Item scanned: %d\n", data[i]);
+	}
+
+	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_centroids, data_size));
+	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_data, centroids_size));
+	
+	cudaDeviceSynchronize();
+	
+	printf("Second malloc!\n");
+	fflush(stdout);
+	
+	cudaMemcpy(gpu_data, (void**) data, data_size, cudaMemcpyHostToDevice);
+
+
+	cudaMemcpy(gpu_centroids, centroids, centroids_size, cudaMemcpyHostToDevice);
+
+	printf("Arrived until here!\n");
+	fflush(stdout);
+
 	// Make array of distances
 	//__shared__ float distances;
 
+	
+	
 	do {
 		it++;
 	
@@ -392,7 +425,7 @@ int main(int argc, char* argv[])
 			minDist = FLT_MAX;
 			for (j = 0; j < K; j++) {
 				dist = euclideanDistance(&data[i * samples], &centroids[j * samples], samples);
-
+				
 				if (dist < minDist) {
 					minDist = dist;
 					classInt = j + 1;
