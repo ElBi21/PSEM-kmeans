@@ -171,7 +171,7 @@ This function could be modified
 static inline float euclideanDistance(float *point, float *center, int samples)
 {
 	float dist = 0.0;
-#pragma omp simd reduction(+ : dist) // usare omp parallel creerebbe un overhead inutile, essendo molti punti
+#pragma omp simd reduction(+ : dist)// usare omp parallel creerebbe un overhead inutile, essendo molti punti
 	for (int i = 0; i < samples; i++)
 	{
 		float diff = point[i] - center[i];
@@ -300,7 +300,7 @@ int main(int argc, char *argv[])
 	// START CLOCK***************************************
 	start = omp_get_wtime();
 	//**************************************************
-	char *outputMsg = (char *)calloc(10000, sizeof(char));
+	char *outputMsg = (char *)calloc(100000, sizeof(char));
 	char line[100];
 
 	int j;

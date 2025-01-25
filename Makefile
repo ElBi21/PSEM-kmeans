@@ -15,7 +15,7 @@ MPICC=mpicc
 CUDACC=nvcc
 
 # Flags for optimization and libs
-FLAGS=-O3 -Wall -fno-omit-frame-pointer
+FLAGS = -O3 -Wall -g -fno-omit-frame-pointer -ffp-contract=off -fno-associative-math
 LIBS=-lm
 
 # Targets to build
