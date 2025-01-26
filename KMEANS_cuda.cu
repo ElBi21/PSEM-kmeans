@@ -261,13 +261,17 @@ __global__ void assignment_step(float* data, float* centroids, int dimensions, i
 
 		// For each dimension...
 		for (int d = 0; d < dimensions; d++) {
-			printf("Thread %d\t\tIndex = %d * (%d * %d) + (%d * %d + %d) * %d + %d = %d\t\tData[%d]: %f\n", threadIdx.y * blockDim.x + threadIdx.x, b_index, blockDim.x, blockDim.y, threadIdx.y, blockDim.x, threadIdx.x, dimensions, d, data_index + d, data_index + d, data[data_index + d]);
-			distance += pow((data[data_index + d] - centroids[j * dimensions + d]), 2);
+			//printf("Thread %d\t\tIndex = %d * (%d * %d) + (%d * %d + %d) * %d + %d = %d\t\tData[%d]: %f\n", threadIdx.y * blockDim.x + threadIdx.x, b_index, blockDim.x, blockDim.y, threadIdx.y, blockDim.x, threadIdx.x, dimensions, d, data_index + d, data_index + d, data[data_index + d]);
+			float l2 = pow((data[data_index + d] - centroids[j * dimensions + d]), 2);
+			printf("Sample of l2: (%f - %f)^2 = %f\n", data[data_index + d], centroids[j * dimensions + d], (data[data_index + d] - centroids[j * dimensions + d])*(data[data_index + d] - centroids[j * dimensions + d]));
+			distance += l2;
 		}
+
+		distance = sqrt(distance);
 
 		// If distance is smaller, replace the distance
 		if (distance < min_dist) {
-			printf("Thread %d found new distance: %d -> %d\n", threadIdx.y * blockDim.x + threadIdx.x, min_dist, distance);
+			printf("Thread %d found new distance: %f -> becomes -> %f\n", threadIdx.y * blockDim.x + threadIdx.x, min_dist, distance);
 			min_dist = distance;
 		}
 
@@ -457,18 +461,12 @@ int main(int argc, char* argv[])
 	printf("%d %d\n", lines, samples);
 
 	// Load data into the GPU
-	CHECK_CUDA_CALL(cudaMalloc((void**)&gpu_centroids, data_size));
-	CHECK_CUDA_CALL(cudaMalloc((void**)&gpu_data, centroids_size));
+	CHECK_CUDA_CALL(cudaMalloc((void**)&gpu_centroids, centroids_size));
+	CHECK_CUDA_CALL(cudaMalloc((void**)&gpu_data, data_size));
 	CHECK_CUDA_CALL(cudaMalloc((void**)&gpu_class_map, K * sizeof(int)));
 	
 	CHECK_CUDA_CALL(cudaMemcpy(gpu_data, data, data_size, cudaMemcpyHostToDevice));
 	CHECK_CUDA_CALL(cudaMemcpy(gpu_centroids, centroids, centroids_size, cudaMemcpyHostToDevice));
-	
-	for (int i = 0; i < 30; i++) {
-		printf("Data[%d]: %f\n", i, data[i]);
-	}
-
-	printf("Data address: %p\nGPU address: %p\n", data, gpu_data);
 
 	do {
 		it++;
