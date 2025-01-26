@@ -10,12 +10,12 @@
 
 # Compilers
 CC=gcc
-OMPFLAG=-fopenmp
+OMPFLAG=-fopenmp -ffp-contract=off -fno-associative-math -mfma -fno-fast-math -ffloat-store
 MPICC=mpicc
 CUDACC=nvcc
 
 # Flags for optimization and libs
-FLAGS = -O3 -Wall -g -fno-omit-frame-pointer -ffp-contract=off -fno-associative-math
+FLAGS = -O3 -Wall -g -fno-omit-frame-pointer
 LIBS=-lm
 
 # Targets to build

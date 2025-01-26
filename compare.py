@@ -1,3 +1,5 @@
+import os
+
 def compare_files(file1, file2):
     """
     Compare two text files and count the number of mismatched lines (points assigned to different clusters).
@@ -41,8 +43,8 @@ def compare_files(file1, file2):
         return -1, -1, -1, -1
 
 # Example usage:
-file1 = "/Users/davide/Desktop/PSEM-kmeans/out100D2.txt "
-file2 = "/Users/davide/Desktop/PSEM-kmeans/out100D2omp.txt "
+file1 = "out100D2.txt"
+file2 = "out100D2omp.txt"
 
 result = compare_files(file1, file2)
 if result[0] == -1:
