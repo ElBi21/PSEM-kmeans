@@ -209,8 +209,7 @@ void zeroFloatMatriz(float *matrix, int rows, int columns)
 Function zeroIntArray: Set array elements to 0
 This function could be modified
 */
-void zeroIntArray(int *array, int size)
-{
+void zeroIntArray(int *array, int size) {
 	int i;
 	for (i=0; i<size; i++)
 		array[i] = 0;	
@@ -232,22 +231,24 @@ __global__ void euclidean_distance(int* data, int* centroids, int point_i, int c
 
 
 /*  To each thread, a point with D dimensions gets assigned. The thread must compute the l_2 norm and
- *  take the minimum 
+ *  take the minimum.
  *
  *  Parameters:
- * 		- `data`: array of points;
- * 		- `centroids`: array of centroids;
+ * 		- `data`: array of points on the GPU;
+ * 		- `centroids`: array of centroids on the GPU;
+ * 		- `class_map`: array with the classes on the GPU.
+ * 		- `changes_return`: address to which the total changes should be written on;
  * 		- `dimensions`: number of dimensions;
- * 		- `b_index`: index of the memory block being currently read;
+ * 		- `b_index`: index of the memory block being currently read (TBR);
  * 		- `K`: number of centroids;
  * 		- `n`: number of data;
- * 		- `class_map`: array with the classes. Should be a global data structure.
  * 
  *  Returns:
  * 		- `NULL`
  */
-__global__ void assignment_step(float* data, float* centroids, int dimensions, int b_index, int K, int n, int* class_map, int* changes_return) {
-	__global__ int changes = 0;
+__global__ void assignment_step(float* data, float* centroids, int* class_map, int* changes_return,
+									int dimensions, int b_index, int K, int n) {
+	__device__ int changes = 0;
 
 	// Make sure that everyone resetted the variable changes
 	__syncthreads();
@@ -262,9 +263,9 @@ __global__ void assignment_step(float* data, float* centroids, int dimensions, i
 		// For each dimension...
 		for (int d = 0; d < dimensions; d++) {
 			//printf("Thread %d\t\tIndex = %d * (%d * %d) + (%d * %d + %d) * %d + %d = %d\t\tData[%d]: %f\n", threadIdx.y * blockDim.x + threadIdx.x, b_index, blockDim.x, blockDim.y, threadIdx.y, blockDim.x, threadIdx.x, dimensions, d, data_index + d, data_index + d, data[data_index + d]);
-			float l2 = pow((data[data_index + d] - centroids[j * dimensions + d]), 2);
-			printf("Sample of l2: (%f - %f)^2 = %f\n", data[data_index + d], centroids[j * dimensions + d], (data[data_index + d] - centroids[j * dimensions + d])*(data[data_index + d] - centroids[j * dimensions + d]));
-			distance += l2;
+			float l2_partial = pow((data[data_index + d] - centroids[j * dimensions + d]), 2);
+			//printf("Sample of l2: (%f - %f)^2 = %f\n", data[data_index + d], centroids[j * dimensions + d], (data[data_index + d] - centroids[j * dimensions + d])*(data[data_index + d] - centroids[j * dimensions + d]));
+			distance += l2_partial;
 		}
 
 		distance = sqrt(distance);
@@ -286,23 +287,95 @@ __global__ void assignment_step(float* data, float* centroids, int dimensions, i
 }
 
 
-/*  To each thread
+/*  To each thread, assign a point. For each such point, get the associated cluster,
+ * 	and count the number of points for each cluster. Then, for each point, sum its
+ * 	coordinates into a matrix which is used for doing the average of the coordinates.
+ * 	After that, average all the coordinates and check the maximum distance that changed.
  * 
+ * 	Parameters:
+ * 		- `data`: pointer to the data points in the GPU;
+ * 		- `class_map`: pointer to the cluster assignments in the GPU;
+ * 		- `centroids_table`: pointer to the table for storing the centroids dimensions in the GPU;
+ * 		- `points_per_class`: pointer to the table storing the amount of points for each class in the GPU;
+ * 		- `block_index`: index of the block (TBR);
+ * 		- `dimensions`: the number of dimensions for each point;
+ * 		- `points`: the number of points;
  * 
- * 
- * 
- * 
- * 
- * 
- * 
- * 
- * 
- * 
- * 
+ *  Returns:
+ * 		- `NULL`
  */
-__global__ void update_step() {
+__global__ void update_step_points(float* data, int* class_map, float* centroids_table, int* points_per_class,
+								 int block_index, int dimensions, int points) {
+	// Cluster assignment of the point
+	int data_index = block_index * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x;
+	int class_assignment = class_map[data_index];
 
+	// Pointer arithmetic to atomically add 1 to points_per_class
+	atomicAdd(points_per_class + class_assignment - 1, 1);
+	//points_per_class[class_assignment - 1] += 1;
+
+	for (int d = 0; d < dimensions; d++) {
+		centroids_table[class_assignment - 1 + d] += data[data_index + d];
+	}
+
+
+	/*
+
+		Parallelizes the following:
+	
+		for (i = 0; i < lines; i++) {
+			classInt = classMap[i];
+			pointsPerClass[classInt - 1] = pointsPerClass[classInt - 1] +1;
+			for (j = 0; j < samples; j++) {
+				auxCentroids[(classInt - 1) * samples + j] += data[i * samples + j];
+			}
+		}
+	
+	 */
 }
+
+/*  To each thread, assign a centroid. 
+ *  
+ *  
+ *  Parameters:
+ * 		- `centroids_table`: a table with all the temporary new coordinates of the centroids on the GPU;
+ * 		- `dimensions`: the number of dimensions of each point;
+ *  
+ *  
+ */
+
+__global__ void update_step_centroids(float* centroids_table, int dimensions) {
+	for (int d = 0; d < dimensions; d++) {
+
+	}
+}
+	/*
+	
+
+
+	// Restart from here
+
+	for (i = 0; i < K; i++) {
+		for (j = 0; j < samples; j++){
+			auxCentroids[i * samples + j] /= pointsPerClass[i];
+		}
+	}
+	
+	maxDist = FLT_MIN;
+	for (i = 0; i < K; i++) {
+		distCentroids[i] = euclideanDistance(&centroids[i * samples], &auxCentroids[i * samples], samples);
+		if (distCentroids[i] > maxDist) {
+			maxDist = distCentroids[i];
+		}
+	}
+	memcpy(centroids, auxCentroids, (K * samples * sizeof(float)));
+	
+	sprintf(line,"\n[%d] Cluster changes: %d\tMax. centroid distance: %f", it, changes, maxDist);
+	outputMsg = strcat(outputMsg,line);
+	
+	 */
+
+
 
 
 
@@ -450,7 +523,9 @@ int main(int argc, char* argv[])
 	/*dim3 point_block(samples, 1000 / samples, 1);
 	dim3 grid_points(10, 10);*/
 
-	dim3 point_block(10, 1);
+	cudaDeviceProp cuda_prop;
+
+	dim3 point_block(10, 10);
 
 	int data_size = lines * samples * sizeof(float);
 	int centroids_size = K * samples * sizeof(float);
@@ -461,9 +536,9 @@ int main(int argc, char* argv[])
 	printf("%d %d\n", lines, samples);
 
 	// Load data into the GPU
-	CHECK_CUDA_CALL(cudaMalloc((void**)&gpu_centroids, centroids_size));
-	CHECK_CUDA_CALL(cudaMalloc((void**)&gpu_data, data_size));
-	CHECK_CUDA_CALL(cudaMalloc((void**)&gpu_class_map, K * sizeof(int)));
+	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_centroids, centroids_size));
+	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_data, data_size));
+	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_class_map, K * sizeof(int)));
 	
 	CHECK_CUDA_CALL(cudaMemcpy(gpu_data, data, data_size, cudaMemcpyHostToDevice));
 	CHECK_CUDA_CALL(cudaMemcpy(gpu_centroids, centroids, centroids_size, cudaMemcpyHostToDevice));
@@ -472,20 +547,22 @@ int main(int argc, char* argv[])
 		it++;
 
 		int* gpu_changes;
-		int* cpu_changes;
+		CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_changes, sizeof(int)));
 	
 		//1. Calculate the distance from each point to the centroid
 		//Assign each point to the nearest centroid.
 
 		// Divide the memory in blocks of 100 points each, to be given to the block
 		for (int block_number = 0; block_number < (lines / 100); block_number++) {
-			assignment_step<<<1, point_block>>>(gpu_data, gpu_centroids, samples, block_number, K, lines, gpu_class_map, gpu_changes);
+			assignment_step<<<1, point_block>>>(gpu_data, gpu_centroids, gpu_class_map, gpu_changes,
+				samples, block_number, K, lines);
 		}
 
 		cudaDeviceSynchronize();
 
-		// For debug purpouses
+		int* cpu_changes;
 		cudaMemcpy(cpu_changes, gpu_changes, sizeof(int), cudaMemcpyDeviceToHost);
+		// For debug purpouses
 		printf("Found %d changes so far\n", cpu_changes);
 
 		/*changes = 0;
@@ -507,6 +584,10 @@ int main(int argc, char* argv[])
 		}*/
 
 		// 2. Recalculates the centroids: calculates the mean within each cluster
+
+		/*for (int i = 0; i < (K / cuda_prop.maxThreadsPerBlock) + 1; i++) {
+			zeroIntArray<<<(), cuda_prop.maxThreadsPerBlock>>>(pointsPerClass, K);
+		}*/
 		zeroIntArray(pointsPerClass, K);
 		zeroFloatMatriz(auxCentroids, K, samples);
 
