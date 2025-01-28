@@ -238,35 +238,36 @@ void zeroIntArray(int *array, int size) {
  */
 __global__ void assignment_step(float* data, float* centroids, int* class_map, int* changes_return,
 									int dimensions, int K, int n) {
-	int thread_index = blockIdx.y * gridDim.x + 
-					   blockIdx.x * (blockDim.x * blockDim.y) + (threadIdx.y * blockDim.x + threadIdx.x);
-	int data_index = thread_index * dimensions;
-	int class_int;
-	float min_dist = FLT_MIN;
-	
-	// For each centroid...
-	for (int centroid = 0; centroid < K; centroid++) {
-		float distance;
+	int thread_index = (blockIdx.y * gridDim.x * blockDim.x * blockDim.y) + (blockIdx.x * blockDim.x * blockDim.y) +
+							(threadIdx.y * blockDim.x) +
+							threadIdx.x;
+	if (thread_index < n) {
+		int data_index = thread_index * dimensions;
+		int class_int;
+		float min_dist = FLT_MIN;
+		
+		// For each centroid...
+		for (int centroid = 0; centroid < K; centroid++) {
+			float distance;
 
-		euclideanDistance(&data[data_index], &centroids[centroid * dimensions], dimensions, &distance);
-		//if (thread_index < 10)
-		//	printf("Thread %d (block %d) obtained distance %f with centroid %d/%d\n", thread_index, blockIdx.y * gridDim.x + blockIdx.x, distance, j, K);
+			euclideanDistance(&data[data_index], &centroids[centroid * dimensions], dimensions, &distance);
 
-		// If distance is smaller, replace the distance and assign new class
-		if (distance < min_dist) {
-			//printf("Thread %d found new distance: %f -> becomes -> %f\n", threadIdx.y * blockDim.x + threadIdx.x, min_dist, distance);
-			min_dist = distance;
-			class_int = centroid + 1;
+			// If distance is smaller, replace the distance and assign new class
+			if (distance < min_dist) {
+				min_dist = distance;
+				class_int = centroid + 1;
+			}
 		}
-	}
 
-	//printf("Thread %d: class %d\n", thread_index, class_int);
-
-	// If the class is different, add one change and write new class
-	if (class_map[thread_index] != class_int) {
-		//printf("[Thread %d] Original: %d    New: %d\n", thread_index, class_map[thread_index], class_int);
-		atomicAdd(changes_return, 1);
-		class_map[thread_index] = class_int;
+		// If the class is different, add one change and write new class
+		if (class_map[thread_index] != class_int) {
+			atomicAdd(changes_return, 1);
+			class_map[thread_index] = class_int;
+		}
+		
+		if (thread_index < 10000) {
+			printf("Thread %d, I got class %d\n", thread_index, class_map[thread_index]);
+		}
 	}
 
 	__syncthreads();
@@ -289,21 +290,37 @@ __global__ void assignment_step(float* data, float* centroids, int* class_map, i
  *  Returns:
  * 		- `NULL`
  */
-__global__ void update_step_points(float* data, int* class_map, float* centroids_table, int* points_per_class, int dimensions, int points) {
+__global__ void update_step_points(float* data, int* class_map, float* centroids_table, int* points_per_class, int dimensions, int n) {
 	// Cluster assignment of the point
-	int thread_index = blockIdx.y * gridDim.x + 
-					   blockIdx.x * (blockDim.x * blockDim.y) + (threadIdx.y * blockDim.x + threadIdx.x);
-	int data_index = thread_index * dimensions;
-	int class_assignment = class_map[data_index];
+	int thread_index = (blockIdx.y * gridDim.x * blockDim.x * blockDim.y) + (blockIdx.x * blockDim.x * blockDim.y) +
+							(threadIdx.y * blockDim.x) +
+							threadIdx.x;
 
-	// Pointer arithmetic to atomically add 1 to points_per_class
-	//printf("Printing the value of PPC: %d\n", points_per_class[class_assignment - 1]);
-	atomicAdd(points_per_class + class_assignment - 1, 1);
-	//points_per_class[class_assignment - 1] += 1;
+	if (thread_index < n) {
+		int data_index = thread_index * dimensions;
+		int class_assignment = class_map[thread_index];
+		//int* where_to = points_per_class + class_assignment - 1;
 
-	for (int d = 0; d < dimensions; d++) {
-		int index = (class_assignment - 1) * dimensions + d;
-		centroids_table[index] += data[data_index + d];
+		if (thread_index < 10000) {
+			printf("Thread %d, class %d\n", thread_index, class_assignment);
+		}
+
+		__syncthreads();
+
+		// Pointer arithmetic to atomically add 1 to points_per_class
+		//if (thread_index == 0 || thread_index == 1)
+		//	printf("Printing the value of PPC: %d\n", points_per_class[class_assignment - 1]);
+		
+
+
+		atomicAdd(&points_per_class[class_assignment - 1], 1);
+
+		//printf("Class assignments for %d: %d    ", class_assignment, points_per_class[class_assignment - 1]);
+
+		for (int d = 0; d < dimensions; d++) {
+			int index = (class_assignment - 1) * dimensions + d;
+			centroids_table[index] += data[data_index + d];
+		}
 	}
 
 	__syncthreads();
@@ -323,28 +340,28 @@ __global__ void update_step_points(float* data, int* class_map, float* centroids
  */
 __global__ void update_step_centroids(float* centroids_table, float* centroids, int* points_per_class,
 										int dimensions, float* max_distance) {
-
+	//printf("Dimensions: %d, Max Distance: %f\n", dimensions, *max_distance);
 	// Average the coordinates of the centroids
-	int centroid_index = /*threadIdx.y * blockDim.x + */threadIdx.x;
-	printf("Thread %d", centroid_index);
+	int centroid_index = threadIdx.x;
+	float distance;
+	
 	for (int d = 0; d < dimensions; d++) {
-		centroids_table[centroid_index * dimensions + d] /= points_per_class[centroid_index];
+		centroids_table[centroid_index * dimensions + d] /= (float) points_per_class[centroid_index]; //centroids_table[centroid_index * dimensions + d] /
+		// Compute Euclidean distance (l_2 norm) to check for maximum distance
+		distance += pow((centroids[centroid_index * dimensions + d] - centroids_table[centroid_index * dimensions + d]), 2);
 	}
 
-	// Compute Euclidean distance (l_2 norm) to check for maximum distance
-	float distance;
-	euclideanDistance(&centroids[centroid_index * dimensions], &centroids_table[centroid_index * dimensions], dimensions, &distance);
-	printf("Distance: %f - Max distance: %f\n", distance, *max_distance);
+	//printf("Distance: %f - Max distance: %f\n", distance, *max_distance);
 	if (distance > *max_distance) {
 		// Exchange atomically, disregard old value
 		atomicExch(max_distance, distance);
 	}
 
 	// Clear the auxiliary matrix and the points_per_class array
-	for (int d = 0; d < dimensions; d++) {
+	/*for (int d = 0; d < dimensions; d++) {
 		centroids_table[centroid_index * dimensions + d] = 0;
 	}
-	points_per_class[centroid_index] = 0;
+	points_per_class[centroid_index] = 0;*/
 
 	__syncthreads();
 }
@@ -436,11 +453,25 @@ int main(int argc, char* argv[])
 	initCentroids(data, centroids, centroidPos, samples, K);
 
 
+	printf("\n    Input properties:");
 	printf("\n\tData file: %s \n\tPoints: %d\n\tDimensions: %d\n", argv[1], lines, samples);
 	printf("\tNumber of clusters: %d\n", K);
 	printf("\tMaximum number of iterations: %d\n", maxIterations);
 	printf("\tMinimum number of changes: %d [%g%% of %d points]\n", minChanges, atof(argv[4]), lines);
 	printf("\tMaximum centroid precision: %f\n", maxThreshold);
+
+
+	// Check CUDA device properties
+	cudaDeviceProp cuda_prop;
+	//CHECK_CUDA_CALL(cudaGetDevice(0));
+	CHECK_CUDA_CALL(cudaGetDeviceProperties(&cuda_prop, 0));
+
+	printf("\n    Device: %s\n", cuda_prop.name);
+	printf("\tMax threads / block: %d\n", cuda_prop.maxThreadsPerBlock);
+	printf("\tMax threads / SM: %d\n", cuda_prop.maxThreadsPerMultiProcessor);
+	printf("\tMax blocks / SM: %d\n", cuda_prop.maxBlocksPerMultiProcessor);
+	printf("\tMax grid size: %d x %d x %d\n", cuda_prop.maxGridSize[0], cuda_prop.maxGridSize[1], cuda_prop.maxGridSize[2]);
+	printf("\tNumber of SMs: %d\n", cuda_prop.multiProcessorCount);
 	
 	//END CLOCK*****************************************
 	#ifdef _OPEN_MP
@@ -495,11 +526,13 @@ int main(int argc, char* argv[])
 	/*dim3 point_block(samples, 1000 / samples, 1);
 	dim3 grid_points(10, 10);*/
 
-	cudaDeviceProp cuda_prop;
+	
+	int std_changes = 0;
 
-	dim3 point_block(10, 10);
-	dim3 temp_grid(10, 10);
-	dim3 centroids_block(K);
+
+	dim3 point_block(32, 32);
+	dim3 temp_grid(10);
+	//dim3 centroids_block(100);
 
 	int data_size = lines * samples * sizeof(float);
 	int centroids_size = K * samples * sizeof(float);
@@ -518,13 +551,14 @@ int main(int argc, char* argv[])
 	// Load data into the GPU
 	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_centroids, centroids_size));
 	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_data, data_size));
-	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_class_map, K * sizeof(int)));
+	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_class_map, lines * sizeof(int)));
 	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_centroids_temp, centroids_size));
 	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_points_per_class, K * sizeof(int)));
 
 	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_changes, sizeof(int)));
 	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_max_distance, sizeof(float)));
 	
+
 	CHECK_CUDA_CALL(cudaMemcpy(gpu_data, data, data_size, cudaMemcpyHostToDevice));
 	CHECK_CUDA_CALL(cudaMemcpy(gpu_centroids, centroids, centroids_size, cudaMemcpyHostToDevice));
 
@@ -535,32 +569,34 @@ int main(int argc, char* argv[])
 	do {
 		it++;
 
+		// Reset changes and max distance
+		CHECK_CUDA_CALL(cudaMemcpy(gpu_changes, &std_changes, sizeof(int), cudaMemcpyHostToDevice));
 		CHECK_CUDA_CALL(cudaMemcpy(gpu_max_distance, &maxDist, sizeof(float), cudaMemcpyHostToDevice));
 
 		// 1. Calculate the distance from each point to the centroid
 		// Assign each point to the nearest centroid.
-
-		// Divide the memory in blocks of 100 points each, to be given to the block
-		// TODO: use blocks instead of for loops, fix some coherent structure regardless of input data
 		assignment_step<<<temp_grid, point_block>>>(gpu_data, gpu_centroids, gpu_class_map, gpu_changes, samples, K, lines);
-		// Wait for all threads to finish
-		
-		//printf("[%d] Finished assignment step\n", it);
+		//CHECK_CUDA_LAST();
 
-		// Write down to host the changes for checking convergence condition
-		cudaMemcpy(&changes, gpu_changes, sizeof(int), cudaMemcpyDeviceToHost);
+
+		// Write down to host the changes for checking convergence condition after waiting for GPU
+		CHECK_CUDA_CALL(cudaDeviceSynchronize());
+		CHECK_CUDA_CALL(cudaMemcpy(&changes, gpu_changes, sizeof(int), cudaMemcpyDeviceToHost));
 
 		// 2. Recalculates the centroids: calculates the mean within each cluster
 		// Perform the first update step, on the points
 		update_step_points<<<temp_grid, point_block>>>(gpu_data, gpu_class_map, gpu_centroids_temp, gpu_points_per_class, samples, lines);
+		CHECK_CUDA_LAST();
 
 		// Perform the second update step, on the centroids
-		update_step_centroids<<<1, centroids_block>>>(gpu_centroids_temp, gpu_centroids, gpu_points_per_class, samples, gpu_max_distance);
-		//printf("[%d] Finished second update step\n", it);
+		update_step_centroids<<<1, 100>>>(gpu_centroids_temp, gpu_centroids, gpu_points_per_class, samples, gpu_max_distance);
+		CHECK_CUDA_LAST();
+		//cudaDeviceSynchronize();
 
 		// Update effectively the positions and take maxDist
-		cudaMemcpy(&maxDist, gpu_max_distance, sizeof(float), cudaMemcpyDeviceToHost);
-		cudaMemcpy(gpu_centroids, gpu_centroids_temp, centroids_size, cudaMemcpyDeviceToDevice);
+		CHECK_CUDA_CALL(cudaMemcpy(&maxDist, gpu_max_distance, sizeof(float), cudaMemcpyDeviceToHost));
+		printf("Max distance: %f\n", maxDist);
+		CHECK_CUDA_CALL(cudaMemcpy(gpu_centroids, gpu_centroids_temp, centroids_size, cudaMemcpyDeviceToDevice));
 		
 		sprintf(line,"\n[%d] Cluster changes: %d\tMax. centroid distance: %f", it, changes, maxDist);
 		outputMsg = strcat(outputMsg,line);
@@ -622,6 +658,14 @@ int main(int argc, char* argv[])
 	free(distCentroids);
 	free(pointsPerClass);
 	free(auxCentroids);
+
+	cudaFree(gpu_data);
+	cudaFree(gpu_centroids);
+	cudaFree(gpu_centroids_temp);
+	cudaFree(gpu_changes);
+	cudaFree(gpu_class_map);
+	cudaFree(gpu_max_distance);
+	cudaFree(gpu_points_per_class);
 
 	//END CLOCK*****************************************
 	#ifdef _OPEN_MP
