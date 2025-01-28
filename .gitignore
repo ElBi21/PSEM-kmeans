@@ -17,3 +17,9 @@ output_*.txt
 
 # VSC
 .vscode
+
+# Misc
+*-out*.txt
+*_temp.*
+out_*
+test*
