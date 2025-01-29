@@ -332,7 +332,7 @@ int main(int argc, char *argv[])
 		// 1. Calculate the distance from each point to the centroid
 		// Assign each point to the nearest centroid.
 		changes = 0;
-    #pragma omp parallel for private(i, class, minDist, j, dist) reduction(+: changes) schedule(dynamic,16)
+#pragma omp parallel for shared (data, classMap, centroids, lines, samples, K) private(i, class, minDist, j, dist) reduction(+ : changes) schedule(dynamic, 16)
 		for (i = 0; i < lines; i++)
 		{
 			class = 1;
@@ -349,9 +349,9 @@ int main(int argc, char *argv[])
 			}
 			if (classMap[i] != class)
 			{
-				classMap[i] = class;
 				changes++;
 			}
+			classMap[i] = class;
 		}
 
 		// 2. Recalculates the centroids: calculates the mean within each cluster
@@ -368,6 +368,7 @@ int main(int argc, char *argv[])
 				auxCentroids[class * samples + j] += data[i * samples + j];
 			}
 		}
+
 		// Calculate the mean for each centroid (divide sums by counts)
 #pragma omp parallel for
 		for (i = 0; i < K; i++)
@@ -380,12 +381,12 @@ int main(int argc, char *argv[])
 
 		// Compute the maximum distance between old and new centroids
 		maxDist = FLT_MIN;
-		#pragma omp parallel for reduction(max : maxDist)
+		//	#pragma omp parallel for reduction(max : maxDist)
 		for (int i = 0; i < K; i++)
 		{
 			distCentroids[i] = euclideanDistance(&centroids[i * samples],
-										   &auxCentroids[i * samples],
-										   samples);
+												 &auxCentroids[i * samples],
+												 samples);
 
 			if (distCentroids[i] > maxDist) // Correct reduction usage
 			{
