@@ -32,8 +32,13 @@
     citecolor=blue
 }
 
+\definecolor{codeCOMMENT}{HTML}{649541}
+\definecolor{codeSTRING}{HTML}{37864A}
+\definecolor{codeKEY}{HTML}{C678DD}
+\definecolor{codeFUNC}{HTML}{61AFEF}
+\definecolor{codeVALUES}{HTML}{C69438}
+
 \newcommand{\eq}{\; = \;}
-%\newcommand{\text}[1]{\mbox{\footnotesize #1}}
 \newcommand{\nwl}{
 
 \medskip
@@ -42,13 +47,16 @@
 \newcommand{\centered}[2]{\begin{tabular}{#1} #2 \end{tabular}}
 
 \lstdefinestyle{standstyle}{
-    %backgroundcolor=\color{backcolour!05},
+    commentstyle=\color{codeCOMMENT},
+    keywordstyle=\bfseries\color{codeKEY},
+    numberstyle=\scriptsize\ttfamily\color{codeVALUES},
+    stringstyle=\color{codeSTRING},
     basicstyle=\ttfamily\linespread{1}\scriptsize\color{black!80},
     breakatwhitespace=false,
     breaklines=true,
     captionpos=b,
     keepspaces=true,
-    numbers=none,
+    numbers=left,
     numbersep=5pt,
     showspaces=false,
     showstringspaces=false,
@@ -108,6 +116,7 @@ Many people prefer to use other clustering methods, such as the fitting of Gauss
 The $k$-means algorithm can be described with the following pseudocode, where $X$ is the set of data points, $C = \{\mu_1, \; \mu_2, \; ..., \; \mu_k \}$ is the set of centroids and $Y$ is the set of assignments:
 
 \begin{algorithm}
+    \label{alg:kmeans}
     \LinesNumbered
     \tcp{Initialize the centroids}
     \For{$k$ in $[1, \; |C|]$}{
@@ -128,7 +137,7 @@ The $k$-means algorithm can be described with the following pseudocode, where $X
     \tcp{Return the centroids}
     \Return $Y$
 
-    \caption{$k$-means (Lloyd's initialization)}\label{alg:kmeans}
+    \caption{$k$-means (Lloyd's initialization)}
 \end{algorithm}
 
 The algorithm consists of 4 main blocks:
@@ -144,7 +153,37 @@ The algorithm consists of 4 main blocks:
 
 As we can see from Algorithm \ref{alg:kmeans}, we have two main blocks that may cause the bottlenecks: in the \textbf{assignment block} and in the \textbf{update block}.
 \nwl
-The first \textbf{for} block in the initialization step does not represent a major bottleneck since it just needs to assign a random location to each of the $K$ centroids. It can be parallelized, but it won't help as much as parallelizing the two steps mentioned before
+The first \textbf{for} block in the initialization step does not represent a major bottleneck, since it just needs to assign a random location to each of the $K$ centroids. It can be parallelized, but it won't help as much as parallelizing the two steps mentioned before.
+\nwl
+The second \textbf{for} block instead is computationally expensive: for each point, the algorithm will have to compute the euclidean distance (here onwards denotes as $\ell_2$) between said point and all centroids $\mu_k \in C$, and select the lowest distance. This will determine the cluster of the point. In a C program, this may be accomplished with the following piece of code:
+\nwl
+\begin{lstlisting}[language = C]
+int cluster;
+// For each point...
+for(i = 0; i < points_number; i++) {
+    class = 1;
+    minDist = FLT_MAX;
+    // For each cluster...
+    for(j = 0; j < K; j++) {
+        // Compute the distance
+        dist = l2_norm(&data[i*samples], &centroids[j*samples], samples);
+
+        // If the distance is the lowest so far, replace it
+        if(dist < minDist) {
+            minDist = dist;
+            class = j+1;
+        }
+    }
+    
+    // If the class is different from before, add a change to the counter
+    if(classMap[i] != class) {
+        changes++;
+    }
+
+    classMap[i]=class;
+}\end{lstlisting}
+
+Notice the presence of the two nested \textbf{for} loops: sequentially, they would take a time of $O(|X| \cdot |C|)$, which may be optimized just by taking a simple single instruction multiple data approach (indeed, with $m$ different processes or threads, it would take a time of $O\left(\frac{|X| \cdot |C|}{m}\right)$ each, which is already better than the first option).
 
 \section{Parallelizing with MPI}
 

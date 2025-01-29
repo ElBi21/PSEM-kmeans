@@ -242,6 +242,18 @@ __global__ void assignment_step(float* data, float* centroids, int* class_map, i
 							(threadIdx.y * blockDim.x) +
 							threadIdx.x;
 
+	extern __shared__ float shared_centroids[];	// K x D x sizeof(float)
+
+	// Define block size and local thread index (index within block)
+	int block_size = blockDim.x * blockDim.y;
+	int local_thread_index = threadIdx.x + threadIdx.y * blockDim.x;
+
+	// Copy centroids data into shared memory
+	for (int portion = 0; portion < (gpu_K * gpu_d) / block_size; portion++) {
+		int copy_index = local_thread_index + portion * block_size;
+		shared_centroids[copy_index] = centroids[copy_index];
+	}
+
 	if (thread_index < gpu_n) {
 		int data_index = thread_index * gpu_d;
 		int class_int = class_map[thread_index];
@@ -505,6 +517,11 @@ int main(int argc, char* argv[])
  *
  */
 
+	// Set carveout to be of maximum size available
+	int carveout = cudaSharedmemCarveoutMaxShared;
+
+	CHECK_CUDA_CALL(cudaFuncSetAttribute(assignment_step, cudaFuncAttributePreferredSharedMemoryCarveout, carveout));
+
 	dim3 gen_block(32, 32);
 	dim3 dyn_grid_pts(pts_grid_size);
 	dim3 dyn_grid_cent(K_grid_size);
@@ -558,7 +575,7 @@ int main(int argc, char* argv[])
 		// 1. Calculate the distance from each point to the centroid
 
 		// Assign each point to the nearest centroid.
-		assignment_step<<<dyn_grid_pts, gen_block>>>(gpu_data, gpu_centroids, gpu_class_map, gpu_changes);
+		assignment_step<<<dyn_grid_pts, gen_block, centroids_size>>>(gpu_data, gpu_centroids, gpu_class_map, gpu_changes);
 
 		// Write down to host the changes for checking convergence condition after waiting for GPU
 		CHECK_CUDA_CALL(cudaDeviceSynchronize());
