@@ -53,6 +53,9 @@ KMEANS_mpi: KMEANS_mpi.c
 KMEANS_cuda: KMEANS_cuda.cu
 	$(CUDACC) $(CUDAFLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
+KMEANS_cuda_f1: KMEANS_cuda_final1.cu
+	$(CUDACC) $(CUDAFLAGS) $(DEBUG) $< $(LIBS) -o $@.out
+
 
 # Remove the target files
 clean:

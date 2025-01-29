@@ -238,24 +238,9 @@ __constant__ int gpu_d;
  */
 __global__ void assignment_step(float* data, float* centroids, int* class_map, int* changes_return) {
 	// Compute thread index
-	//extern __shared__ float shared_centroids[];	// K x D x sizeof(float)
 	int thread_index = (blockIdx.y * gridDim.x * blockDim.x * blockDim.y) + (blockIdx.x * blockDim.x * blockDim.y) +
 							(threadIdx.y * blockDim.x) +
 							threadIdx.x;
-
-	// Define block index and local thread index (index within block)
-	/*int block_index = blockIdx.x + (blockIdx.y * blockDim.x);
-	int local_thread_index = threadIdx.x + threadIdx.y * blockDim.x;
-
-	if (thread_index < gpu_K) {
-		// Copy centroids to shared memory
-		for (int dim = 0; dim < gpu_d; dim++) {
-			shared_centroids[local_thread_index * gpu_d + dim] = centroids[thread_index * gpu_d + dim];
-		}
-	}
-
-	// Wait for the kernel to copy the centroids
-	__syncthreads();*/
 
 	if (thread_index < gpu_n) {
 		int data_index = thread_index * gpu_d;
@@ -520,14 +505,6 @@ int main(int argc, char* argv[])
  *
  */
 
-	// Set carveout to be of maximum size available
-	//int carveout = cudaSharedmemCarveoutMaxShared;
-
-	//CHECK_CUDA_CALL(cudaFuncSetAttribute(assignment_step, cudaFuncAttributePreferredSharedMemoryCarveout, carveout));
-	//CHECK_CUDA_CALL(cudaFuncSetAttribute(update_step_points, cudaFuncAttributePreferredSharedMemoryCarveout, carveout));
-	//CHECK_CUDA_CALL(cudaFuncSetAttribute(update_step_centroids, cudaFuncAttributePreferredSharedMemoryCarveout, carveout));
-
-	// Define dynamic grids
 	dim3 gen_block(32, 32);
 	dim3 dyn_grid_pts(pts_grid_size);
 	dim3 dyn_grid_cent(K_grid_size);
