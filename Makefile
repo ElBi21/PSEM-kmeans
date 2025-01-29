@@ -20,7 +20,7 @@ FLAGS = -O3 -Wall -g -fno-omit-frame-pointer
 LIBS=-lm
 
 # Targets to build
-OBJS=KMEANS_seq KMEANS_omp KMEANS_mpi KMEANS_cuda
+OBJS=KMEANS_seq.out KMEANS_omp.out KMEANS_mpi.out KMEANS_cuda.out KMEANS_cuda_f1.out
 
 # Rules. By default show help
 help:
@@ -51,6 +51,9 @@ KMEANS_mpi: KMEANS_mpi.c
 	$(MPICC) $(FLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
 KMEANS_cuda: KMEANS_cuda.cu
+	$(CUDACC) $(CUDAFLAGS) $(DEBUG) $< $(LIBS) -o $@.out
+
+KMEANS_cuda_f1: KMEANS_cuda_final1.cu
 	$(CUDACC) $(CUDAFLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
 

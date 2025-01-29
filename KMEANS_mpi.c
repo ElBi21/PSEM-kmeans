@@ -14,6 +14,7 @@
  * This work is licensed under a Creative Commons Attribution-ShareAlike 4.0 International License.
  * https://creativecommons.org/licenses/by-sa/4.0/
  */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -30,12 +31,369 @@
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 
-/* 
-Function showFileError: It displays the corresponding error during file reading.
-*/
+
+//	UNCHANGABLE FUNCTIONS DECLARATION
+
+//Function showFileError: It displays the corresponding error during file reading.
+void showFileError(int error, char* filename);
+
+//Function readInput: It reads the file to determine the number of rows and columns.
+int readInput(char* filename, int *lines, int *samples);
+
+
+//Function readInput2: It loads data from file.
+int readInput2(char* filename, float* data);
+
+
+//Function writeResult: It writes in the output file the cluster of each sample (point).
+int writeResult(int *classMap, int lines, const char* filename);
+
+/*Function initCentroids: This function copies the values of the initial centroids, using their 
+position in the input data structure as a reference map.*/
+void initCentroids(const float *data, float* centroids, int* centroidPos, int samples, int K);
+
+
+//	CHANGABLE FUNCTIONS DEFINITION
+
+/*Function euclideanDistance: Euclidean distance
+This function could be modified*/
+float euclideanDistance(float *point, float *center, int samples)
+{
+	float dist=0.0;
+	for(int i=0; i<samples; i++) 
+	{
+		dist+= (point[i]-center[i])*(point[i]-center[i]);
+	}
+	dist = sqrt(dist);
+	return(dist);
+}
+
+/*Function zeroIntArray: Set array elements to 0
+This function could be modified*/
+void zeroIntArray(int *array, int size)
+{
+	int i;
+	for (i=0; i<size; i++)
+		array[i] = 0;	
+}
+
+/*Function zeroFloatMatriz: Set matrix elements to 0
+This function could be modified*/
+void zeroFloatMatriz(float *matrix, int rows, int columns)
+{
+	int i,j;
+	for (i=0; i<rows; i++)
+		for (j=0; j<columns; j++)
+			matrix[i*columns+j] = 0.0;	
+}
+
+//	MPI PROGRAM
+int main(int argc, char* argv[])
+{
+	/* 0. Initialize MPI */
+	MPI_Init( &argc, &argv );
+	int rank, size;
+	MPI_Comm_rank( MPI_COMM_WORLD, &rank );
+	MPI_Comm_size(MPI_COMM_WORLD, &size);
+	MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
+
+//	START CLOCK
+	double start, end;
+	start = MPI_Wtime();
+
+// 	READING PARAMETERS
+	if(argc !=  7)
+	{
+		fprintf(stderr,"EXECUTION ERROR K-MEANS: Parameters are not correct.\n");
+		fprintf(stderr,"./KMEANS [Input Filename] [Number of clusters] [Number of iterations] [Number of changes] [Threshold] [Output data file]\n");
+		fflush(stderr);
+		MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
+	}
+
+	int N = 0, D = 0;  
+	float *points = NULL;
+	
+	if (rank == 0)
+	{	int error = readInput(argv[1], &N, &D);
+		if(error != 0)
+		{
+			showFileError(error,argv[1]);
+			MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
+		}
+		points = (float*)calloc(N*D, sizeof(float));
+		if (points == NULL)
+		{
+			fprintf(stderr,"Memory allocation error.\n");
+			MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
+		}
+		error = readInput2(argv[1], points);
+		if(error != 0)
+		{
+			showFileError(error,argv[1]);
+			MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
+		}
+	}
+
+	MPI_Bcast(&N, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	
+	MPI_Bcast(&D, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+
+	int K=atoi(argv[2]); 
+	int maxIterations=atoi(argv[3]);
+	int minChanges= (int)(N*atof(argv[4])/100.0);
+	float maxThreshold=atof(argv[5]);
+	
+	float *centroids = (float*)calloc(K*D,sizeof(float));
+	if (centroids == NULL){
+		fprintf(stderr,"Memory allocation error.\n");
+		MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
+	}
+	int *classMap = NULL;
+
+	if (rank == 0) {
+		int *centroidPos = (int*)calloc(K,sizeof(int));
+		classMap = (int*)calloc(N,sizeof(int));
+
+		if (centroidPos == NULL || classMap == NULL)
+		{
+			fprintf(stderr,"Memory allocation error.\n");
+			MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
+		}
+
+		srand(0);
+		for(int i=0; i<K; i++) 
+			centroidPos[i]=rand()%N;
+		
+		initCentroids(points, centroids, centroidPos, D, K);
+		free(centroidPos);
+		
+		printf("\n\tData file: %s \n\tPoints: %d\n\tDimensions: %d\n", argv[1], N, D);
+		printf("\tNumber of clusters: %d\n", K);
+		printf("\tMaximum number of iterations: %d\n", maxIterations);
+		printf("\tMinimum number of changes: %d [%g%% of %d points]\n", minChanges, atof(argv[4]), N);
+		printf("\tMaximum centroid precision: %f\n", maxThreshold);
+	}
+
+	MPI_Bcast(centroids, K*D, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+//	END CLOCK
+	end = MPI_Wtime();
+	printf("\n%d |Memory allocation: %f seconds\n", rank, end - start);
+	fflush(stdout);
+	MPI_Barrier(MPI_COMM_WORLD);
+
+//	START CLOCK
+	start = MPI_Wtime();
+
+	char *outputMsg = (char *)calloc(10000,sizeof(char));
+	char line[100];
+
+	int it=0;
+	int changes;
+	float maxDist;
+	int *pointsPerClass = (int *)malloc(K*sizeof(int)); 
+	float *auxCentroids = (float*)malloc(K*D*sizeof(float)); 
+	if (pointsPerClass == NULL || auxCentroids == NULL)
+	{
+		fprintf(stderr,"Memory allocation error.\n");
+		MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
+	}
+
+//  VALUES NEEDED FOR STEP 1
+	int *sendcounts = (int *)malloc(size * sizeof(int));
+	int *displs = (int *)malloc(size * sizeof(int));
+	int remainder = N % size;
+	int sum = 0;
+	for (int i = 0; i < size; ++i) {
+		sendcounts[i] = (N / size) * D;
+		if (i < remainder) sendcounts[i] += D;
+		displs[i] = sum;
+		sum += sendcounts[i];
+	}
+	int local_n = sendcounts[rank] / D;
+	float *local_points = (float *)calloc(local_n * D, sizeof(float));
+	int *local_classMap = (int *)calloc(local_n, sizeof(int));
+	if (local_points == NULL || local_classMap == NULL)
+	{
+		fprintf(stderr,"Memory allocation error.\n");
+		MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
+	}
+
+	MPI_Scatterv(points, sendcounts, displs, MPI_FLOAT, local_points, sendcounts[rank], MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+//  VALUES NEEDED FOR STEP 2
+	int *centroid_sendcounts = (int *)malloc(size * sizeof(int));
+	int *centroid_displs = (int *)malloc(size * sizeof(int));
+	int centroid_remainder = K % size;
+	sum = 0;
+	for (int i = 0; i < size; ++i) {
+		centroid_sendcounts[i] = (K / size) * D;
+		if (i < centroid_remainder) centroid_sendcounts[i] += D;
+		centroid_displs[i] = sum;
+		sum += centroid_sendcounts[i];
+	}
+	int local_k = centroid_sendcounts[rank] / D;
+	float *local_centroids = (float *)calloc(local_k * D, sizeof(float));
+
+	int terminate;
+//	DO START
+	do{
+		it++;
+
+//	1. 	Calculate the distance from each point to the centroid
+		int local_changes = 0;
+		for(int i=0; i<local_n; i++)
+		{	
+			int class = 1;
+			float minDist = FLT_MAX;
+			for(int j=0; j<K; j++)
+			{
+				float dist = euclideanDistance(&local_points[i*D], &centroids[j*D], D);
+				if(dist < minDist)
+				{
+					minDist = dist;
+					class = j+1;
+				}
+			}
+			if(local_classMap[i] != class)
+			{
+				local_changes++;
+			}
+			local_classMap[i] = class;
+		}
+		MPI_Request MPI_REQUEST;
+		MPI_Ireduce(&local_changes, &changes, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD, &MPI_REQUEST);
+
+		zeroIntArray(pointsPerClass, K);
+		zeroFloatMatriz(auxCentroids, K, D);
+
+		for(int i=0; i<local_n; i++) 
+		{
+			int class = local_classMap[i];
+			pointsPerClass[class-1]++;
+			for(int j=0; j<D; j++){
+				auxCentroids[(class-1)*D + j] += local_points[i*D + j];
+			}
+		}
+
+		MPI_Allreduce(MPI_IN_PLACE, pointsPerClass, K, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+		
+		MPI_Allreduce(MPI_IN_PLACE, auxCentroids, K*D, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+
+		float local_maxDist = 0.0f;
+		for(int i=0; i<local_k; i++) {
+			int global_idx = centroid_displs[rank]/D + i;
+			if (global_idx >= K) break;
+			float distance = 0.0f;
+			if (pointsPerClass[global_idx] == 0) continue;
+			for(int j=0; j<D; j++){
+				float centroid_val = auxCentroids[global_idx*D + j] / pointsPerClass[global_idx];
+				float diff = centroids[global_idx*D + j] - centroid_val;
+				distance += diff * diff;
+				local_centroids[i*D + j] = centroid_val;
+			}
+			distance = sqrt(distance);
+			if(distance > local_maxDist) {
+				local_maxDist = distance;
+			}
+		}
+
+		MPI_Reduce(&local_maxDist,&maxDist,1,MPI_FLOAT,MPI_MAX,0,MPI_COMM_WORLD);
+		
+		MPI_Allgatherv(local_centroids, local_k*D, MPI_FLOAT, centroids, centroid_sendcounts, centroid_displs, MPI_FLOAT, MPI_COMM_WORLD);
+
+		if (rank == 0){
+			MPI_Wait(&MPI_REQUEST, MPI_STATUS_IGNORE);
+			sprintf(line,"\n[%d] Cluster changes: %d\nMax. centroid distance: %f", it, changes, maxDist);
+			outputMsg = strcat(outputMsg,line);
+			terminate = (changes > minChanges) && (it < maxIterations) && (maxDist > maxThreshold);
+		}
+
+		MPI_Bcast(&terminate, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	} while (terminate);
+
+	// Gather classMap using varying counts
+	int *recvcounts = (int *)malloc(size * sizeof(int));
+	int *rdispls = (int *)malloc(size * sizeof(int));
+	sum = 0;
+	for (int i = 0; i < size; ++i) {
+		recvcounts[i] = sendcounts[i] / D;
+		rdispls[i] = sum;
+		sum += recvcounts[i];
+	}
+	MPI_Gatherv(local_classMap, local_n, MPI_INT, classMap, recvcounts, rdispls, MPI_INT, 0, MPI_COMM_WORLD);
+
+// 	Output and termination conditions
+	if (rank == 0){
+		printf("%s",outputMsg);
+	}	
+
+//	END CLOCK
+	end = MPI_Wtime();
+	printf("\n%d |Computation: %f seconds", rank, end - start);
+	fflush(stdout);
+	MPI_Barrier(MPI_COMM_WORLD);
+
+//	START CLOCK
+	start = MPI_Wtime();
+
+	if (rank == 0){
+		if (changes <= minChanges) {
+			printf("\n\nTermination condition:\nMinimum number of changes reached: %d [%d]", changes, minChanges);
+		}
+		else if (it >= maxIterations) {
+			printf("\n\nTermination condition:\nMaximum number of iterations reached: %d [%d]", it, maxIterations);
+		}
+		else {
+			printf("\n\nTermination condition:\nCentroid update precision reached: %g [%g]", maxDist, maxThreshold);
+		}	
+
+		int error = writeResult(classMap, N, argv[6]);
+		if(error != 0)
+		{
+			showFileError(error, argv[6]);
+			MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
+		}
+		fflush(stdout);
+	}
+	
+//	FREE LOCAL ARRAYS
+	free(local_points);
+	free(local_classMap);
+	free(local_centroids);
+	free(sendcounts);
+	free(displs);
+	free(centroid_sendcounts);
+	free(centroid_displs);
+	free(recvcounts);
+	free(rdispls);
+
+//	Free memory
+	if (rank == 0){
+		free(points);
+		free(classMap);
+	}
+	free(centroids);
+	free(pointsPerClass);
+    free(auxCentroids);
+
+//	END CLOCK
+	end = MPI_Wtime();
+	printf("\n\n%d |Memory deallocation: %f seconds\n", rank, end - start);
+	fflush(stdout);
+
+//	FINALIZE
+	MPI_Finalize();
+	return 0;
+}
+
+
+
+//	UNCHANGABLE FUNCTIONS DEFINITIONS
 void showFileError(int error, char* filename)
 {
-	printf("Error\n");
+	printf("Error: %d\n", error);
 	switch (error)
 	{
 		case -1:
@@ -52,9 +410,6 @@ void showFileError(int error, char* filename)
 	fflush(stderr);	
 }
 
-/* 
-Function readInput: It reads the file to determine the number of rows and columns.
-*/
 int readInput(char* filename, int *lines, int *samples)
 {
     FILE *fp;
@@ -93,9 +448,6 @@ int readInput(char* filename, int *lines, int *samples)
 	}
 }
 
-/* 
-Function readInput2: It loads data from file.
-*/
 int readInput2(char* filename, float* data)
 {
     FILE *fp;
@@ -125,9 +477,6 @@ int readInput2(char* filename, float* data)
 	}
 }
 
-/* 
-Function writeResult: It writes in the output file the cluster of each sample (point).
-*/
 int writeResult(int *classMap, int lines, const char* filename)
 {	
     FILE *fp;
@@ -148,11 +497,6 @@ int writeResult(int *classMap, int lines, const char* filename)
 	}
 }
 
-/*
-
-Function initCentroids: This function copies the values of the initial centroids, using their 
-position in the input data structure as a reference map.
-*/
 void initCentroids(const float *data, float* centroids, int* centroidPos, int samples, int K)
 {
 	int i;
@@ -164,283 +508,24 @@ void initCentroids(const float *data, float* centroids, int* centroidPos, int sa
 	}
 }
 
-/*
-Function euclideanDistance: Euclidean distance
-This function could be modified
-*/
-float euclideanDistance(float *point, float *center, int samples)
-{
-	float dist=0.0;
-	for(int i=0; i<samples; i++) 
-	{
-		dist+= (point[i]-center[i])*(point[i]-center[i]);
-	}
-	dist = sqrt(dist);
-	return(dist);
-}
+/*//////////////////////////////////////////////////
+	char fuori2[10000];  // Large enough to hold the formatted string
+    strcpy(fuori2, "[ "); // Start the string with "["
 
-/*
-Function zeroFloatMatriz: Set matrix elements to 0
-This function could be modified
-*/
-void zeroFloatMatriz(float *matrix, int rows, int columns)
-{
-	int i,j;
-	for (i=0; i<rows; i++)
-		for (j=0; j<columns; j++)
-			matrix[i*columns+j] = 0.0;	
-}
+    // Build the formatted string
+    for (int i = 0; i < K; i++) {
+        char temp[20];  // Temporary buffer for individual values
+        sprintf(temp, "%d", pointsPerClass[i]);  // Convert number to string
+        strcat(fuori2, temp);  // Append to the main string
 
-/*
-Function zeroIntArray: Set array elements to 0
-This function could be modified
-*/
-void zeroIntArray(int *array, int size)
-{
-	int i;
-	for (i=0; i<size; i++)
-		array[i] = 0;	
-}
-
-int main(int argc, char* argv[])
-{
-	/* 0. Initialize MPI */
-	MPI_Init( &argc, &argv );
-	int rank;
-	MPI_Comm_rank( MPI_COMM_WORLD, &rank );
-	MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
-
-	//START CLOCK***************************************
-	double start, end;
-	start = MPI_Wtime();
-	//**************************************************
-	/*
-	* PARAMETERS
-	*
-	* argv[1]: Input data file
-	* argv[2]: Number of clusters
-	* argv[3]: Maximum number of iterations of the method. Algorithm termination condition.
-	* argv[4]: Minimum percentage of class changes. Algorithm termination condition.
-	*          If between one iteration and the next, the percentage of class changes is less than
-	*          this percentage, the algorithm stops.
-	* argv[5]: Precision in the centroid distance after the update.
-	*          It is an algorithm termination condition. If between one iteration of the algorithm 
-	*          and the next, the maximum distance between centroids is less than this precision, the
-	*          algorithm stops.
-	* argv[6]: Output file. Class assigned to each point of the input file.
-	* */
-	if(argc !=  7)
-	{
-		fprintf(stderr,"EXECUTION ERROR K-MEANS: Parameters are not correct.\n");
-		fprintf(stderr,"./KMEANS [Input Filename] [Number of clusters] [Number of iterations] [Number of changes] [Threshold] [Output data file]\n");
-		fflush(stderr);
-		MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
-	}
-
-	// Reading the input data
-	// lines = number of points; samples = number of dimensions per point
-	int lines = 0, samples= 0;  
-	
-	int error = readInput(argv[1], &lines, &samples);
-	if(error != 0)
-	{
-		showFileError(error,argv[1]);
-		MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
-	}
-	
-	float *data = (float*)calloc(lines*samples,sizeof(float));
-	if (data == NULL)
-	{
-		fprintf(stderr,"Memory allocation error.\n");
-		MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
-	}
-	error = readInput2(argv[1], data);
-	if(error != 0)
-	{
-		showFileError(error,argv[1]);
-		MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
-	}
-
-	// Parameters
-	int K=atoi(argv[2]); 
-	int maxIterations=atoi(argv[3]);
-	int minChanges= (int)(lines*atof(argv[4])/100.0);
-	float maxThreshold=atof(argv[5]);
-
-	int *centroidPos = (int*)calloc(K,sizeof(int));
-	float *centroids = (float*)calloc(K*samples,sizeof(float));
-	int *classMap = (int*)calloc(lines,sizeof(int));
-
-    if (centroidPos == NULL || centroids == NULL || classMap == NULL)
-	{
-		fprintf(stderr,"Memory allocation error.\n");
-		MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
-	}
-
-	// Initial centrodis
-	srand(0);
-	int i;
-	for(i=0; i<K; i++) 
-		centroidPos[i]=rand()%lines;
-	
-	// Loading the array of initial centroids with the data from the array data
-	// The centroids are points stored in the data array.
-	initCentroids(data, centroids, centroidPos, samples, K);
-
-
-	printf("\n\tData file: %s \n\tPoints: %d\n\tDimensions: %d\n", argv[1], lines, samples);
-	printf("\tNumber of clusters: %d\n", K);
-	printf("\tMaximum number of iterations: %d\n", maxIterations);
-	printf("\tMinimum number of changes: %d [%g%% of %d points]\n", minChanges, atof(argv[4]), lines);
-	printf("\tMaximum centroid precision: %f\n", maxThreshold);
-	
-	//END CLOCK*****************************************
-	end = MPI_Wtime();;
-	printf("\nMemory allocation: %f seconds\n", end - start);
+        if (i < K - 1) {  // Add a comma and space if not the last element
+            strcat(fuori2, ", ");
+        }
+		if (i%10 == 0 && i!=0){strcat(fuori2, "\n");}
+    }
+    strcat(fuori2, " ]");  // Close the string with "]"
+    // Print the final formatted string
+    printf("%d |My pointsPerClass: %s\n", rank, fuori2);
 	fflush(stdout);
-	//**************************************************
-	//START CLOCK***************************************
-	start = MPI_Wtime();
-	//**************************************************
-	char *outputMsg = (char *)calloc(10000,sizeof(char));
-	char line[100];
-
-	int j;
-	int class;
-	float dist, minDist;
-	int it=0;
-	int changes = 0;
-	float maxDist;
-
-	//pointPerClass: number of points classified in each class
-	//auxCentroids: mean of the points in each class
-	int *pointsPerClass = (int *)malloc(K*sizeof(int));
-	float *auxCentroids = (float*)malloc(K*samples*sizeof(float));
-	float *distCentroids = (float*)malloc(K*sizeof(float)); 
-	if (pointsPerClass == NULL || auxCentroids == NULL || distCentroids == NULL)
-	{
-		fprintf(stderr,"Memory allocation error.\n");
-		MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
-	}
-
-/*
- *
- * START HERE: DO NOT CHANGE THE CODE ABOVE THIS POINT
- *
- */
-
-	do{
-		it++;
-	
-		//1. Calculate the distance from each point to the centroid
-		//Assign each point to the nearest centroid.
-		changes = 0;
-		for(i=0; i<lines; i++)
-		{
-			class=1;
-			minDist=FLT_MAX;
-			for(j=0; j<K; j++)
-			{
-				dist=euclideanDistance(&data[i*samples], &centroids[j*samples], samples);
-
-				if(dist < minDist)
-				{
-					minDist=dist;
-					class=j+1;
-				}
-			}
-			if(classMap[i]!=class)
-			{
-				changes++;
-			}
-			classMap[i]=class;
-		}
-
-		// 2. Recalculates the centroids: calculates the mean within each cluster
-		zeroIntArray(pointsPerClass,K);
-		zeroFloatMatriz(auxCentroids,K,samples);
-
-		for(i=0; i<lines; i++) 
-		{
-			class=classMap[i];
-			pointsPerClass[class-1] = pointsPerClass[class-1] +1;
-			for(j=0; j<samples; j++){
-				auxCentroids[(class-1)*samples+j] += data[i*samples+j];
-			}
-		}
-
-		for(i=0; i<K; i++) 
-		{
-			for(j=0; j<samples; j++){
-				auxCentroids[i*samples+j] /= pointsPerClass[i];
-			}
-		}
-		
-		maxDist=FLT_MIN;
-		for(i=0; i<K; i++){
-			distCentroids[i]=euclideanDistance(&centroids[i*samples], &auxCentroids[i*samples], samples);
-			if(distCentroids[i]>maxDist) {
-				maxDist=distCentroids[i];
-			}
-		}
-		memcpy(centroids, auxCentroids, (K*samples*sizeof(float)));
-		
-		sprintf(line,"\n[%d] Cluster changes: %d\tMax. centroid distance: %f", it, changes, maxDist);
-		outputMsg = strcat(outputMsg,line);
-
-	} while((changes>minChanges) && (it<maxIterations) && (maxDist>maxThreshold));
-
-/*
- *
- * STOP HERE: DO NOT CHANGE THE CODE BELOW THIS POINT
- *
- */
-	// Output and termination conditions
-	printf("%s",outputMsg);	
-
-	//END CLOCK*****************************************
-	end = MPI_Wtime();
-	printf("\nComputation: %f seconds", end - start);
-	fflush(stdout);
-	//**************************************************
-	//START CLOCK***************************************
-	start = MPI_Wtime();
-	//**************************************************
-
-	
-
-	if (changes <= minChanges) {
-		printf("\n\nTermination condition:\nMinimum number of changes reached: %d [%d]", changes, minChanges);
-	}
-	else if (it >= maxIterations) {
-		printf("\n\nTermination condition:\nMaximum number of iterations reached: %d [%d]", it, maxIterations);
-	}
-	else {
-		printf("\n\nTermination condition:\nCentroid update precision reached: %g [%g]", maxDist, maxThreshold);
-	}	
-
-	// Writing the classification of each point to the output file.
-	error = writeResult(classMap, lines, argv[6]);
-	if(error != 0)
-	{
-		showFileError(error, argv[6]);
-		MPI_Abort( MPI_COMM_WORLD, EXIT_FAILURE );
-	}
-
-	//Free memory
-	free(data);
-	free(classMap);
-	free(centroidPos);
-	free(centroids);
-	free(distCentroids);
-	free(pointsPerClass);
-	free(auxCentroids);
-
-	//END CLOCK*****************************************
-	end = MPI_Wtime();
-	printf("\n\nMemory deallocation: %f seconds\n", end - start);
-	fflush(stdout);
-	//***************************************************/
-	MPI_Finalize();
-	return 0;
-}
+	MPI_Barrier(MPI_COMM_WORLD);
+////////////////////////////////////////////////////////////////////////////*/
