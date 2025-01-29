@@ -332,7 +332,7 @@ int main(int argc, char *argv[])
 		// 1. Calculate the distance from each point to the centroid
 		// Assign each point to the nearest centroid.
 		changes = 0;
-#pragma omp parallel for shared (data, classMap, centroids, lines, samples, K) private(i, class, minDist, j, dist) reduction(+ : changes) schedule(dynamic, 16)
+#pragma omp parallel for shared(data, classMap, centroids, lines, samples, K) private(i, class, minDist, j, dist) reduction(+ : changes) schedule(dynamic, 16)
 		for (i = 0; i < lines; i++)
 		{
 			class = 1;
@@ -358,15 +358,35 @@ int main(int argc, char *argv[])
 		zeroIntArray(pointsPerClass, K);
 		zeroFloatMatriz(auxCentroids, K, samples);
 
-#pragma omp parallel for reduction(+ : pointsPerClass[ : K], auxCentroids[ : K * samples])
-		for (i = 0; i < lines; i++)
+#pragma omp parallel
 		{
-			int class = classMap[i] - 1; // zero-based index
-			pointsPerClass[class]++;
-			for (int j = 0; j < samples; j++)
+			int *local_pointsPerClass = (int *)calloc(K, sizeof(int));
+			float *local_auxCentroids = (float *)calloc(K * samples, sizeof(float));
+
+#pragma omp for
+			for (int i = 0; i < lines; i++)
 			{
-				auxCentroids[class * samples + j] += data[i * samples + j];
+				class = classMap[i];
+				local_pointsPerClass[class - 1] += 1;
+				for (int j = 0; j < samples; j++)
+				{
+					local_auxCentroids[(class - 1) * samples + j] += data[i * samples + j];
+				}
 			}
+
+#pragma omp critical
+			{
+				for (int k = 0; k < K; k++)
+				{
+					pointsPerClass[k] += local_pointsPerClass[k];
+					for (int j = 0; j < samples; j++)
+					{
+						auxCentroids[k * samples + j] += local_auxCentroids[k * samples + j];
+					}
+				}
+			}
+			free(local_pointsPerClass);
+			free(local_auxCentroids);
 		}
 
 		// Calculate the mean for each centroid (divide sums by counts)
