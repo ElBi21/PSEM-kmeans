@@ -41,7 +41,7 @@
 \newcommand{\eq}{\; = \;}
 \newcommand{\nwl}{
 
-\medskip
+\vspace{11pt}
 
 }
 \newcommand{\centered}[2]{\begin{tabular}{#1} #2 \end{tabular}}
@@ -62,6 +62,7 @@
     showstringspaces=false,
     showtabs=false,
     tabsize=4,
+    xleftmargin=15pt,
 }
 
 \lstset{style=standstyle}
@@ -151,11 +152,13 @@ The algorithm consists of 4 main blocks:
 
 \subsection{Sequential Code Bottlenecks}
 
-As we can see from Algorithm \ref{alg:kmeans}, we have two main blocks that may cause the bottlenecks: in the \textbf{assignment block} and in the \textbf{update block}.
+For implementing the $k$-means algorithm, we will base all the codebase upon the project made from professors Diego García-Álvarez and Arturo Gonzalez-Escribano from the University of Valladolid. The code shown in this subsection is taken from their project, although slightly adapted for giving enough context in the code snippets.
 \nwl
-The first \textbf{for} block in the initialization step does not represent a major bottleneck, since it just needs to assign a random location to each of the $K$ centroids. It can be parallelized, but it won't help as much as parallelizing the two steps mentioned before.
+We described before the overall structure of the $k$-means algorithm: we will now proceed to examine its two main bottlenecks. As we can see from Algorithm \ref{alg:kmeans}, we have two main blocks that may cause performance issues: the \textbf{assignment block} and the \textbf{update block}.
 \nwl
-The second \textbf{for} block instead is computationally expensive: for each point, the algorithm will have to compute the euclidean distance (here onwards denotes as $\ell_2$) between said point and all centroids $\mu_k \in C$, and select the lowest distance. This will determine the cluster of the point. In a C program, this may be accomplished with the following piece of code:
+The first \textbf{for} block in the \textbf{initialization step} does not represent a major bottleneck, since it just needs to assign a random location to each of the $K$ centroids. It can be parallelized, but it won't help as much as parallelizing the two steps mentioned before.
+\nwl
+The second \textbf{for} block represents the \textbf{assignment step}, which is, unlike the initialization step, computationally expensive: for each point, the algorithm will have to compute the euclidean distance (here onwards denotes as $\ell_2$) between said point and all centroids $\mu_k \in C$, and select the lowest distance. This will determine the cluster of the point. In a C program, this may be accomplished with the following piece of code:
 \nwl
 \begin{lstlisting}[language = C]
 int cluster;
@@ -183,7 +186,39 @@ for(i = 0; i < points_number; i++) {
     classMap[i]=class;
 }\end{lstlisting}
 
-Notice the presence of the two nested \textbf{for} loops: sequentially, they would take a time of $O(|X| \cdot |C|)$, which may be optimized just by taking a simple single instruction multiple data approach (indeed, with $m$ different processes or threads, it would take a time of $O\left(\frac{|X| \cdot |C|}{m}\right)$ each, which is already better than the first option).
+Notice the presence of the two nested \textbf{for} loops: sequentially, they would take a time of $O(|X| \cdot |C|)$, which may be optimized just by taking a simple single instruction multiple data approach (indeed, with $m > 1$ different processes or threads, it would take a time of $O\left(\frac{|X| \cdot |C|}{m}\right)$ each, which is already better than the first option).
+\nwl
+The third \textbf{for} loop represents the update step, which also is computationally expensive: we would need to perform the mean of the coordinates of all the points belonging to a cluster $\mu_k$. This implies that all the coordinates of the points must be first summed, and then averaged on the number of points being classified to $\mu_k$. An implementation in the C language would look like the following:
+\nwl
+\begin{lstlisting}[language = C]
+// For each point...
+for (i = 0; i < lines; i++) {
+    point_class = classMap[i];
+    // Add 1 to the points classified for class k
+    pointsPerClass[point_class - 1] += 1;
+
+    // For each dimension...
+    for(j = 0; j < samples; j++) {
+        // ...add it to a table for summing and averaging
+        auxCentroids[(point_class - 1) * samples + j] += data[i * samples + j];
+    }
+}
+
+for (i = 0; i < K; i++) {
+    for (j = 0; j < samples; j++) {
+        // Average all dimensions
+        auxCentroids[i * samples + j] /= pointsPerClass[i];
+    }
+}
+
+maxDist = FLT_MIN;
+for (i = 0; i < K; i++) {
+    // Compute the moving distance, as a convergence check
+    distCentroids[i] = euclideanDistance(&centroids[i * samples], &auxCentroids[i * samples], samples);
+    if (distCentroids[i] > maxDist) {
+        maxDist = distCentroids[i];
+    }
+}\end{lstlisting}
 
 \section{Parallelizing with MPI}
 
