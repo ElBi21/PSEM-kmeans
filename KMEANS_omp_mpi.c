@@ -284,14 +284,6 @@ int main(int argc, char *argv[])
 	printf("\tMinimum number of changes: %d [%g%% of %d points]\n", minChanges, atof(argv[4]), lines);
 	printf("\tMaximum centroid precision: %f\n", maxThreshold);
 
-	// END CLOCK*****************************************
-	end = omp_get_wtime();
-	printf("\nMemory allocation: %f seconds\n", end - start);
-	fflush(stdout);
-	//**************************************************
-	// START CLOCK***************************************
-	start = omp_get_wtime();
-	//**************************************************
 	char *outputMsg = (char *)calloc(10000, sizeof(char));
 	char line[100];
 
@@ -366,6 +358,19 @@ int main(int argc, char *argv[])
 	// Local buffers
 	int *local_pointsPerClass = (int *)calloc(K, sizeof(int));
 	float *local_auxCentroids = (float *)calloc(K * samples, sizeof(float));
+
+	double local_start, local_finish, local_elapsed, elapsed;
+
+	// END CLOCK*****************************************
+	end = omp_get_wtime();
+	printf("\nMemory allocation: %f seconds\n", end - start);
+	fflush(stdout);
+	//**************************************************
+	// START CLOCK***************************************
+	MPI_Barrier(MPI_COMM_WORLD); // ensures that all threads start timer at same time
+	local_start = MPI_Wtime();
+	//**************************************************
+
 	do
 	{
 		it++;
@@ -434,7 +439,7 @@ int main(int argc, char *argv[])
 		MPI_Allreduce(local_pointsPerClass, pointsPerClass, K, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 		MPI_Allreduce(local_auxCentroids, auxCentroids, K * samples, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
 
-		// Calculate the mean for each centroid 
+		// Calculate the mean for each centroid
 #pragma omp parallel for
 		for (i = 0; i < K; i++)
 		{
@@ -466,13 +471,13 @@ int main(int argc, char *argv[])
 	} while ((changes > minChanges) && (it < maxIterations) && (maxDist > (maxThreshold * maxThreshold)));
 
 	MPI_Gather(
-		local_classMap, 
-		local_lines,	
-		MPI_INT,		
-		classMap,		
-		local_lines,	
-		MPI_INT,		
-		0,				
+		local_classMap,
+		local_lines,
+		MPI_INT,
+		classMap,
+		local_lines,
+		MPI_INT,
+		0,
 		MPI_COMM_WORLD);
 
 	/*
@@ -484,8 +489,11 @@ int main(int argc, char *argv[])
 	printf("%s", outputMsg);
 
 	// END CLOCK*****************************************
-	end = omp_get_wtime();
-	printf("\nComputation: %f seconds", end - start);
+	local_finish = MPI_Wtime();
+	local_elapsed = local_finish - local_start;
+	MPI_Reduce(&local_elapsed, &elapsed, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+	if(rank == 0)
+		printf("\nComputation: %f seconds", elapsed);
 	fflush(stdout);
 	//**************************************************
 	// START CLOCK***************************************
