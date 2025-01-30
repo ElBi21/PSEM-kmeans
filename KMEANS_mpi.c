@@ -545,25 +545,3 @@ void initCentroids(const float *data, float* centroids, int* centroidPos, int sa
 		memcpy(&centroids[i*samples], &data[idx*samples], (samples*sizeof(float)));
 	}
 }
-
-/*//////////////////////////////////////////////////
-	char fuori2[10000];  // Large enough to hold the formatted string
-    strcpy(fuori2, "[ "); // Start the string with "["
-
-    // Build the formatted string
-    for (int i = 0; i < K; i++) {
-        char temp[20];  // Temporary buffer for individual values
-        sprintf(temp, "%d", pointsPerClass[i]);  // Convert number to string
-        strcat(fuori2, temp);  // Append to the main string
-
-        if (i < K - 1) {  // Add a comma and space if not the last element
-            strcat(fuori2, ", ");
-        }
-		if (i%10 == 0 && i!=0){strcat(fuori2, "\n");}
-    }
-    strcat(fuori2, " ]");  // Close the string with "]"
-    // Print the final formatted string
-    printf("%d |My pointsPerClass: %s\n", rank, fuori2);
-	fflush(stdout);
-	MPI_Barrier(MPI_COMM_WORLD);
-////////////////////////////////////////////////////////////////////////////*/
