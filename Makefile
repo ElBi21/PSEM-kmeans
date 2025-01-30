@@ -9,18 +9,17 @@
 #
 
 # Compilers
-CC=gcc
-OMPFLAG=-fopenmp -ffp-contract=off -fno-associative-math -mfma -fno-fast-math -ffloat-store
-CUDAFLAGS=--generate-line-info
+CC=gcc-14
+OMPFLAG=-fopenmp
 MPICC=mpicc
 CUDACC=nvcc
 
 # Flags for optimization and libs
-FLAGS = -O3 -Wall -g -fno-omit-frame-pointer
+FLAGS = -O3 -Wall -isysroot $(shell xcrun --show-sdk-path)
 LIBS=-lm
 
 # Targets to build
-OBJS=KMEANS_seq.out KMEANS_omp.out KMEANS_mpi.out KMEANS_cuda.out KMEANS_cuda_f1.out
+OBJS=KMEANS_seq KMEANS_omp KMEANS_mpi KMEANS_cuda KMEANS_omp_mpi
 
 # Rules. By default show help
 help:
@@ -33,6 +32,7 @@ help:
 	@echo "make cKMEANS_omp	Build only the OpenMP version"
 	@echo "make KMEANS_mpi	Build only the MPI version"
 	@echo "make KMEANS_cuda	Build only the CUDA version"
+	@echo "make KMEANS_omp_mpi	Build the MPI+OMP version"
 	@echo
 	@echo "make all	Build all versions (Sequential, OpenMP)"
 	@echo "make debug	Build all version with demo output for small surfaces"
@@ -51,10 +51,7 @@ KMEANS_mpi: KMEANS_mpi.c
 	$(MPICC) $(FLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
 KMEANS_cuda: KMEANS_cuda.cu
-	$(CUDACC) $(CUDAFLAGS) $(DEBUG) $< $(LIBS) -o $@.out
-
-KMEANS_cuda_f1: KMEANS_cuda_final1.cu
-	$(CUDACC) $(CUDAFLAGS) $(DEBUG) $< $(LIBS) -o $@.out
+	$(CUDACC) $(DEBUG) $< $(LIBS) -o $@.out
 
 KMEANS_omp_mpi: KMEANS_omp_mpi.c
 	$(MPICC) $(FLAGS) $(DEBUG) $(OMPFLAG) $< $(LIBS) -o $@.out
