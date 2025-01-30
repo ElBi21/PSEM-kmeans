@@ -59,6 +59,9 @@ KMEANS_cuda_f1: KMEANS_cuda_final1.cu
 KMEANS_omp_mpi: KMEANS_omp_mpi.c
 	$(MPICC) $(FLAGS) $(DEBUG) $(OMPFLAG) $< $(LIBS) -o $@.out
 
+KMEANS_cuda_mpi: KMEANS_cuda_mpi.cu
+	$(CUDACC) $(CUDAFLAGS) -lmpi $(DEBUG) $< $(LIBS) -o $@.out
+
 # Remove the target files
 clean:
 	rm -rf $(OBJS)

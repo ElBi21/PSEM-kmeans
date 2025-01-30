@@ -565,11 +565,7 @@ int main(int argc, char* argv[])
 		CHECK_CUDA_CALL(cudaMemcpy(&changes, gpu_changes, sizeof(int), cudaMemcpyDeviceToHost));
 
 		// 2. Recalculates the centroids: calculates the mean within each cluster
-		
-		// Perform the first update step, on the points
-		//update_step_points<<<dyn_grid_pts, gen_block>>>(gpu_data, gpu_class_map, gpu_centroids_temp, gpu_points_per_class);
-		//CHECK_CUDA_CALL(cudaDeviceSynchronize());
-
+        
 		// Perform the second update step, on the centroids
 		step_2_kernel<<<dyn_grid_cent, gen_block>>>(gpu_centroids_temp, gpu_centroids, gpu_points_per_class, gpu_max_distance);
 		CHECK_CUDA_LAST();

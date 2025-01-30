@@ -24,3 +24,5 @@ out*.txt
 *_temp.*
 out_*
 test*
+NSCompute
+.ipynb_checkpoints

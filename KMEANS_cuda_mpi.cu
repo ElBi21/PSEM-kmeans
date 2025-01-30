@@ -28,6 +28,18 @@
 #define MAXLINE 2000
 #define MAXCAD 200
 
+/*	Important assumption: each process will run on a different GPU. That is, no two (or more) processes will share
+ *	the same GPU. In order to make the sharing possible, change the value here below accordingly:
+ *	
+ *		- 0: all processes will run on the same GPU
+ *		- 1: all processes will run on different GPUs. Mind that the following must hold:
+ *	
+ * 				|processes| = |GPUs|
+ *	
+ **/
+
+#define SINGLE_GPU_PER_PROCESS 0
+
 //Macros
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
@@ -233,19 +245,24 @@ __constant__ int gpu_K;
 __constant__ int gpu_n;
 __constant__ int gpu_d;
 
-/*  To each thread, a point with D dimensions gets assigned. The thread must compute the l_2 norm and
- *  take the minimum.
+/*  To each thread, a point with D dimensions gets assigned. The thread must compute the
+ *  l_2 norm and take the minimum. Then, for each such point, get the associated cluster,
+ * 	and count the number of points for each cluster. Then, for each point, sum its
+ * 	coordinates into a matrix which is used for doing the average of the coordinates.
+ * 	After that, average all the coordinates and check the maximum distance that changed.
  *
  *  Parameters:
  * 		- `data`: array of points, on the GPU;
  * 		- `centroids`: array of centroids, on the GPU;
  * 		- `class_map`: array with the classes, on the GPU.
  * 		- `changes_return`: address to which the total changes should be written on;
+ * 		- `centroids_table`: pointer to the table for storing the centroids dimensions, on the GPU;
+ * 		- `points_per_class`: pointer to the table storing the amount of points for each class, on the GPU;
  * 
  *  Returns:
  * 		- `NULL`
  */
-__global__ void assignment_step(float* data, float* centroids, int* class_map, int* changes_return) {
+__global__ void step_1_kernel(float* data, float* centroids, int* points_per_class, float* centroids_table, int* class_map, int* changes_return) {
 	// Compute thread index
 	int thread_index = (blockIdx.y * gridDim.x * blockDim.x * blockDim.y) + (blockIdx.x * blockDim.x * blockDim.y) +
 							(threadIdx.y * blockDim.x) +
@@ -289,35 +306,11 @@ __global__ void assignment_step(float* data, float* centroids, int* class_map, i
 		
 		// Map the value to the class map
 		class_map[thread_index] = class_int;
-	}
-}
 
-
-/*  To each thread, assign a point. For each such point, get the associated cluster,
- * 	and count the number of points for each cluster. Then, for each point, sum its
- * 	coordinates into a matrix which is used for doing the average of the coordinates.
- * 	After that, average all the coordinates and check the maximum distance that changed.
- * 
- * 	Parameters:
- * 		- `data`: pointer to the data points, on the GPU;
- * 		- `class_map`: pointer to the cluster assignments, on the GPU;
- * 		- `centroids_table`: pointer to the table for storing the centroids dimensions, on the GPU;
- * 		- `points_per_class`: pointer to the table storing the amount of points for each class, on the GPU;
- * 
- *  Returns:
- * 		- `NULL`
- */
-__global__ void update_step_points(float* data, int* class_map, float* centroids_table, int* points_per_class) {
-	// Index of the thread
-	int thread_index = (blockIdx.y * gridDim.x * blockDim.x * blockDim.y) + (blockIdx.x * blockDim.x * blockDim.y) +
-							(threadIdx.y * blockDim.x) +
-							threadIdx.x;
-
-	if (thread_index < gpu_n) {
-		int data_index = thread_index * gpu_d;
 		int class_assignment = class_map[thread_index];
 		int point_index = class_assignment - 1;
 
+		// Atomically increase the number of points for the given class
 		atomicAdd(&(points_per_class[point_index]), 1);
 
 		for (int dim = 0; dim < gpu_d; dim++) {
@@ -341,7 +334,7 @@ __global__ void update_step_points(float* data, int* class_map, float* centroids
  *  Returns:
  * 		- `NULL`
  */
-__global__ void update_step_centroids(float* centroids_table, float* centroids, int* points_per_class, float* max_distance) {
+__global__ void step_2_kernel(float* centroids_table, float* centroids, int* points_per_class, float* max_distance) {
 	// Index of the thread
 	int thread_index = (blockIdx.y * gridDim.x * blockDim.x * blockDim.y) + (blockIdx.x * blockDim.x * blockDim.y) +
 							(threadIdx.y * blockDim.x) +
@@ -409,8 +402,11 @@ int main(int argc, char* argv[]) {
 
     // lines = number of points; samples = number of dimensions per point
     int lines = 0, samples= 0;
-    int n, K, d;
-    void* partial_centroids;
+
+	float* data;
+	float* centroids;
+
+    void* partial_centroids;	// Will hold K / size items
 
     // If your rank is 0...
     if (rank == 0) {
@@ -431,7 +427,7 @@ int main(int argc, char* argv[]) {
             exit(error);
         }
         
-        float *data = (float*) calloc(lines * samples, sizeof(float));
+        data = (float*) calloc(lines * samples, sizeof(float));
         if (data == NULL) {
             fprintf(stderr,"Memory allocation error.\n");
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
@@ -444,73 +440,74 @@ int main(int argc, char* argv[]) {
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
             exit(error);
         }
+	}
+
+	// Broadcast N and D
+	MPI_Bcast(&lines, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	MPI_Bcast(&samples, 1, MPI_INT, 0, MPI_COMM_WORLD);
         
+	// Parameters from the input args
+	int K = atoi(argv[2]); 
+	int maxIterations = atoi(argv[3]);
+	int minChanges = (int) (lines * atof(argv[4]) / 100.0);
+	float maxThreshold = atof(argv[5]);
 
-        // Parameters
-        int K = atoi(argv[2]); 
-        int maxIterations = atoi(argv[3]);
-        int minChanges = (int) (lines * atof(argv[4]) / 100.0);
-        float maxThreshold = atof(argv[5]);
+	centroids = (float*) calloc(K * samples, sizeof(float));
+	
+	if (centroids == NULL) {
+		fprintf(stderr, "Memory allocation error.\n");
+		MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+		exit(-4);
+	}
 
-        int *centroidPos = (int*) calloc(K, sizeof(int));
-        float *centroids = (float*) calloc(K * samples, sizeof(float));
-        int *classMap = (int*) calloc(lines, sizeof(int));
+	if (rank == 0) {
+		int* centroidPos = (int*) calloc(K, sizeof(int));
+		//int* classMap = (int*) calloc(lines, sizeof(int));
 
-        if (centroidPos == NULL || centroids == NULL || classMap == NULL) {
-            fprintf(stderr, "Memory allocation error.\n");
-            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-            exit(-4);
-        }
+		// Initial centrodis
+		srand(0);
+		int i;
+		for (i = 0; i < K; i++) 
+			centroidPos[i] = rand() % lines;
+		
+		// Loading the array of initial centroids with the data from the array data
+		// The centroids are points stored in the data array.
+		initCentroids(data, centroids, centroidPos, samples, K);
+		free(centroidPos);
 
-        // Initial centrodis
-        srand(0);
-        int i;
-        for (i = 0; i < K; i++) 
-            centroidPos[i] = rand() % lines;
-        
-        // Loading the array of initial centroids with the data from the array data
-        // The centroids are points stored in the data array.
-        initCentroids(data, centroids, centroidPos, samples, K);
+		printf("\n    Input properties:");
+		printf("\n\tData file: %s \n\tPoints: %d\n\tDimensions: %d\n", argv[1], lines, samples);
+		printf("\tNumber of clusters: %d\n", K);
+		printf("\tMaximum number of iterations: %d\n", maxIterations);
+		printf("\tMinimum number of changes: %d [%g%% of %d points]\n", minChanges, atof(argv[4]), lines);
+		printf("\tMaximum centroid precision: %f\n", maxThreshold);
 
-        MPI_Send(centroids, K / 2, MPI_FLOAT, 1, 0, MPI_COMM_WORLD);
+		// Check CUDA device properties
+		cudaDeviceProp cuda_prop;
 
-        printf("\n    Input properties:");
-        printf("\n\tData file: %s \n\tPoints: %d\n\tDimensions: %d\n", argv[1], lines, samples);
-        printf("\tNumber of clusters: %d\n", K);
-        printf("\tMaximum number of iterations: %d\n", maxIterations);
-        printf("\tMinimum number of changes: %d [%g%% of %d points]\n", minChanges, atof(argv[4]), lines);
-        printf("\tMaximum centroid precision: %f\n", maxThreshold);
-    } else if (rank == 1) {
-        // Receive parameters n, K and d
-        MPI_
+		CHECK_CUDA_CALL(cudaGetDeviceProperties(&cuda_prop, 0));
 
-        partial_centroids = malloc((K / 2) * sizeof(float));
-        MPI_Recv(partial_centroids, K / 2, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    }
+		printf("\n    Device: %s\n", cuda_prop.name);
+		printf("\tCompute Capability: %d.%d\n", cuda_prop.major, cuda_prop.minor);
+		printf("\tMax threads / block: %d\n", cuda_prop.maxThreadsPerBlock);
+		printf("\tMax threads / SM: %d\n", cuda_prop.maxThreadsPerMultiProcessor);
+		printf("\tMax blocks / SM: %d\n", cuda_prop.maxBlocksPerMultiProcessor);
+		printf("\tMax grid size: %d x %d x %d\n", cuda_prop.maxGridSize[0], cuda_prop.maxGridSize[1], cuda_prop.maxGridSize[2]);
+		printf("\tMax shared memory per SM: %dB\n", cuda_prop.sharedMemPerMultiprocessor);
+		printf("\tNumber of SMs: %d\n", cuda_prop.multiProcessorCount);
+		printf("\tStarting with following grids and blocks:\n");
+		printf("\t    Blocks: 32 x 32\n");
+		printf("\t    Grid for points: %d x (32 x 32)\n", lines / (32 * 32) + 1);
+		printf("\t    Grid for centroids: %d x (32 x 32)\n", K / (32 * 32) + 1);
+	}
 
+	int local_n = lines / comm_size;
+	float* partial_data = (float*) calloc(local_n * samples, sizeof(float));
+	int *pointsPerClass = (int*) malloc(K * sizeof(int)); 
+	float *auxCentroids = (float*) malloc(K * samples * sizeof(float)); 
 
-
-	// Check CUDA device properties
-	cudaDeviceProp cuda_prop;
-
-	// Adapt to the number of points
-	int pts_grid_size = lines / (32 * 32) + 1;
-	int K_grid_size = K / (32 * 32) + 1;
-
-	CHECK_CUDA_CALL(cudaGetDeviceProperties(&cuda_prop, 0));
-
-	printf("\n    Device: %s\n", cuda_prop.name);
-	printf("\tCompute Capability: %d.%d\n", cuda_prop.major, cuda_prop.minor);
-	printf("\tMax threads / block: %d\n", cuda_prop.maxThreadsPerBlock);
-	printf("\tMax threads / SM: %d\n", cuda_prop.maxThreadsPerMultiProcessor);
-	printf("\tMax blocks / SM: %d\n", cuda_prop.maxBlocksPerMultiProcessor);
-	printf("\tMax grid size: %d x %d x %d\n", cuda_prop.maxGridSize[0], cuda_prop.maxGridSize[1], cuda_prop.maxGridSize[2]);
-	printf("\tMax shared memory per SM: %dB\n", cuda_prop.sharedMemPerMultiprocessor);
-	printf("\tNumber of SMs: %d\n", cuda_prop.multiProcessorCount);
-	printf("\tStarting with following grids and blocks:\n");
-	printf("\t    Blocks: 32 x 32\n");
-	printf("\t    Grid for points: %d x (32 x 32)\n", pts_grid_size);
-	printf("\t    Grid for centroids: %d x (32 x 32)\n", K_grid_size);
+	MPI_Bcast(centroids, K * samples, MPI_FLOAT, 0, MPI_COMM_WORLD);
+	MPI_Scatter(data, lines * samples, MPI_FLOAT, partial_data, local_n * samples, MPI_FLOAT, 0, MPI_COMM_WORLD);	
 
 
 	
@@ -523,8 +520,20 @@ int main(int argc, char* argv[]) {
 	printf("\nMemory allocation: %f seconds\n", end - start);
 	fflush(stdout);
 
-	CHECK_CUDA_CALL( cudaSetDevice(0) );
+	// Check assumption on top of file for better explanation on this part
+
+	#if SINGLE_GPU_PER_PROCESS == 0 
+		CHECK_CUDA_CALL( cudaSetDevice(0) );
+	#elif SINGLE_GPU_PER_PROCESS == 1
+		CHECK_CUDA_CALL( cudaSetDevice(rank) );
+	#else
+		printf("Invalid SINGLE_GPU_PER_PROCESS value. Aborting\n");
+		MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+		exit(-4);
+	#endif
+
 	CHECK_CUDA_CALL( cudaDeviceSynchronize() );
+
 	//**************************************************
 	//START CLOCK***************************************
 	#ifdef _OPEN_MP
@@ -542,14 +551,13 @@ int main(int argc, char* argv[]) {
 
 	//pointPerClass: number of points classified in each class
 	//auxCentroids: mean of the points in each class
-	int *pointsPerClass = (int *) malloc(K * sizeof(int));
-	float *auxCentroids = (float*) malloc(K * samples * sizeof(float));
-	float *distCentroids = (float*) malloc(K * sizeof(float)); 
-	if (pointsPerClass == NULL || auxCentroids == NULL || distCentroids == NULL)
-	{
-		fprintf(stderr,"Memory allocation error.\n");
-		exit(-4);
-	}
+	//int *local_pointsPerClass = (int*) malloc(K / comm_size * sizeof(int));
+	//float *local_auxCentroids = (float*) malloc((K * samples) * sizeof(float));
+	//float *distCentroids = (float*) malloc(K * sizeof(float)); 
+	//if (local_pointsPerClass == NULL || local_auxCentroids == NULL || distCentroids == NULL) {
+	//	fprintf(stderr,"Memory allocation error.\n");
+	//	exit(-4);
+	//}
 
 /*
  *
@@ -564,7 +572,11 @@ int main(int argc, char* argv[]) {
 	// Set carveout to be of maximum size available
 	int carveout = cudaSharedmemCarveoutMaxShared;
 
-	CHECK_CUDA_CALL(cudaFuncSetAttribute(assignment_step, cudaFuncAttributePreferredSharedMemoryCarveout, carveout));
+	CHECK_CUDA_CALL(cudaFuncSetAttribute(step_1_kernel, cudaFuncAttributePreferredSharedMemoryCarveout, carveout));
+
+	// CUDA related variables
+	int pts_grid_size = (lines / comm_size) / (32 * 32) + 1;
+	int K_grid_size = (K / comm_size) / (32 * 32) + 1;
 
 	dim3 gen_block(32, 32);
 	dim3 dyn_grid_pts(pts_grid_size);
@@ -585,20 +597,34 @@ int main(int argc, char* argv[]) {
 	float* gpu_max_distance;
 
 	// Load data into the GPU
+
+	/*	Variables:
+	 *		- centroids: same for all;
+	 *		- data: split;
+	 *		- class_map: split;
+	 *		- centroids_temp: split;
+	 * 		- points_per_class: split;
+	 * 		- changes: split;
+	 * 		- max_distance: split;
+	 * 
+	 * 
+	 *  */
+
+
 	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_centroids, centroids_size));
 	CHECK_CUDA_CALL(cudaMemcpy(gpu_centroids, centroids, centroids_size, cudaMemcpyHostToDevice));
 
-	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_data, data_size));
-	CHECK_CUDA_CALL(cudaMemcpy(gpu_data, data, data_size, cudaMemcpyHostToDevice));
+	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_data, data_size / comm_size));
+	CHECK_CUDA_CALL(cudaMemcpy(gpu_data, partial_data, data_size / comm_size, cudaMemcpyHostToDevice));
 	
-	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_class_map, lines * sizeof(int)));
-	CHECK_CUDA_CALL(cudaMemset(gpu_class_map, 0, lines * sizeof(int)));
+	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_class_map, lines / comm_size * sizeof(int)));
+	CHECK_CUDA_CALL(cudaMemset(gpu_class_map, 0, lines / comm_size * sizeof(int)));
 	
-	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_centroids_temp, centroids_size));
-	CHECK_CUDA_CALL(cudaMemset(gpu_centroids_temp, 0, centroids_size));
+	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_centroids_temp, centroids_size / comm_size));
+	CHECK_CUDA_CALL(cudaMemset(gpu_centroids_temp, 0, centroids_size / comm_size));
 
-	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_points_per_class, K * sizeof(int)));
-	CHECK_CUDA_CALL(cudaMemset(gpu_points_per_class, 0, K * sizeof(int)));
+	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_points_per_class, K / comm_size * sizeof(int)));
+	CHECK_CUDA_CALL(cudaMemset(gpu_points_per_class, 0, K / comm_size * sizeof(int)));
 
 	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_changes, sizeof(int)));
 
@@ -612,45 +638,56 @@ int main(int argc, char* argv[]) {
 	do {
 		it++;
 
-		// Reset changes and max distance
+		// Reset changes, max distance, table of centroids and points per class
 		CHECK_CUDA_CALL(cudaMemset(gpu_changes, 0, sizeof(int)));
 		CHECK_CUDA_CALL(cudaMemset(gpu_max_distance, FLT_MIN, sizeof(float)));
+		CHECK_CUDA_CALL(cudaMemset(gpu_centroids_temp, 0, centroids_size / comm_size * sizeof(int)));
+		CHECK_CUDA_CALL(cudaMemset(gpu_points_per_class, 0, K / comm_size * sizeof(int)));
+		
+		// Ensure memory is actually ready for being used
+		CHECK_CUDA_CALL(cudaDeviceSynchronize());
 
 		// 1. Calculate the distance from each point to the centroid
 
 		// Assign each point to the nearest centroid.
-		assignment_step<<<dyn_grid_pts, gen_block, centroids_size>>>(gpu_data, gpu_centroids, gpu_class_map, gpu_changes);
-
-		// Write down to host the changes for checking convergence condition after waiting for GPU
-		CHECK_CUDA_CALL(cudaDeviceSynchronize());
-		CHECK_CUDA_CALL(cudaMemcpy(&changes, gpu_changes, sizeof(int), cudaMemcpyDeviceToHost));
-
-		// 2. Recalculates the centroids: calculates the mean within each cluster
-		
-		// Ensure memory is actually ready for being used
-		CHECK_CUDA_CALL(cudaMemset(gpu_centroids_temp, 0, K * samples * sizeof(int)));
-		CHECK_CUDA_CALL(cudaMemset(gpu_points_per_class, 0, K * sizeof(int)));
-		CHECK_CUDA_CALL(cudaDeviceSynchronize());
-
-		// Perform the first update step, on the points
-		update_step_points<<<dyn_grid_pts, gen_block>>>(gpu_data, gpu_class_map, gpu_centroids_temp, gpu_points_per_class);
+		step_1_kernel<<<dyn_grid_pts, gen_block, centroids_size / comm_size>>>(gpu_data, gpu_centroids, gpu_points_per_class,
+			gpu_centroids_temp, gpu_class_map, gpu_changes);
 		CHECK_CUDA_LAST();
 
-		CHECK_CUDA_CALL(cudaDeviceSynchronize());
+		int* local_changes;
+		int* local_points_per_class;
+		MPI_Request MPI_changes_reduce_handler;
 
+		CHECK_CUDA_CALL(cudaMemcpy(local_changes, gpu_changes, sizeof(int), cudaMemcpyDeviceToHost));
+		CHECK_CUDA_CALL(cudaMemcpy(pointsPerClass, gpu_points_per_class, K * sizeof(int), cudaMemcpyDeviceToHost));
+		CHECK_CUDA_CALL(cudaMemcpy(auxCentroids, gpu_centroids_temp, K * samples * sizeof(float), cudaMemcpyDeviceToHost));
+		
+		// Write down to host the changes for checking convergence condition after waiting for GPU
+		CHECK_CUDA_CALL(cudaDeviceSynchronize());
+		
+		MPI_Ireduce(local_changes, &changes, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD, &MPI_changes_reduce_handler);
+		MPI_Allreduce(MPI_IN_PLACE, pointsPerClass, K, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+		MPI_Allreduce(MPI_IN_PLACE, auxCentroids, K * samples, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+
+		// 2. Recalculates the centroids: calculates the mean within each cluster
+        
 		// Perform the second update step, on the centroids
-		update_step_centroids<<<dyn_grid_cent, gen_block>>>(gpu_centroids_temp, gpu_centroids, gpu_points_per_class, gpu_max_distance);
+		step_2_kernel<<<dyn_grid_cent, gen_block>>>(gpu_centroids_temp, gpu_centroids, gpu_points_per_class, gpu_max_distance);
 		CHECK_CUDA_LAST();
 
 		// Update effectively the positions and take maxDist
 		CHECK_CUDA_CALL(cudaMemcpy(&maxDist, gpu_max_distance, sizeof(float), cudaMemcpyDeviceToHost));
 		CHECK_CUDA_CALL(cudaMemcpy(gpu_centroids, gpu_centroids_temp, centroids_size, cudaMemcpyDeviceToDevice));
 		
+		CHECK_CUDA_CALL(cudaDeviceSynchronize());
+
 		sprintf(line,"\n[%d] Cluster changes: %d\tMax. centroid distance: %f", it, changes, maxDist);
-		outputMsg = strcat(outputMsg,line);
+		outputMsg = strcat(outputMsg, line);
 
 	} while((changes > minChanges) && (it < maxIterations) && (maxDist > maxThreshold));
 
+	// Needed after loop
+	int* partial_class_map = (int*) calloc(local_n, sizeof(int));
 
 /*
  *
@@ -679,37 +716,40 @@ int main(int argc, char* argv[]) {
 	#endif
 	//**************************************************
 
-	
+	if (rank == 0) {
+		int* classMap;
 
-	if (changes <= minChanges) {
-		printf("\n\nTermination condition:\nMinimum number of changes reached: %d [%d]", changes, minChanges);
-	}
-	else if (it >= maxIterations) {
-		printf("\n\nTermination condition:\nMaximum number of iterations reached: %d [%d]", it, maxIterations);
-	}
-	else {
-		printf("\n\nTermination condition:\nCentroid update precision reached: %g [%g]", maxDist, maxThreshold);
+
+
+
+		if (changes <= minChanges) {
+			printf("\n\nTermination condition:\nMinimum number of changes reached: %d [%d]", changes, minChanges);
+		}
+		else if (it >= maxIterations) {
+			printf("\n\nTermination condition:\nMaximum number of iterations reached: %d [%d]", it, maxIterations);
+		}
+		else {
+			printf("\n\nTermination condition:\nCentroid update precision reached: %g [%g]", maxDist, maxThreshold);
+		}	
+
+		// Writing the classification of each point to the output file.
+		CHECK_CUDA_CALL(cudaMemcpy(classMap, gpu_class_map, lines * sizeof(int), cudaMemcpyDeviceToHost));
+		CHECK_CUDA_CALL(cudaDeviceSynchronize());
+
+		int error = writeResult(classMap, lines, argv[6]);
+		if(error != 0)
+		{
+			showFileError(error, argv[6]);
+			exit(error);
+		}
+
+		//Free memory
+		free(data);
+		free(classMap);
 	}	
 
-	// Writing the classification of each point to the output file.
-	CHECK_CUDA_CALL(cudaMemcpy(classMap, gpu_class_map, lines * sizeof(int), cudaMemcpyDeviceToHost));
-	CHECK_CUDA_CALL(cudaDeviceSynchronize());
-
-	error = writeResult(classMap, lines, argv[6]);
-	if(error != 0)
-	{
-		showFileError(error, argv[6]);
-		exit(error);
-	}
-
-	//Free memory
-	free(data);
-	free(classMap);
-	free(centroidPos);
+	free(partial_data);
 	free(centroids);
-	free(distCentroids);
-	free(pointsPerClass);
-	free(auxCentroids);
 
 	cudaFree(gpu_data);
 	cudaFree(gpu_centroids);
