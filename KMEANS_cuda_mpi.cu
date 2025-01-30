@@ -22,6 +22,7 @@
 #include <string.h>
 #include <float.h>
 #include <cuda.h>
+#include <mpi.h>
 
 
 #define MAXLINE 2000
@@ -35,6 +36,7 @@
  * Macros to show errors when calling a CUDA library function,
  * or after launching a kernel
  */
+
 #define CHECK_CUDA_CALL(a) { \
 	cudaError_t ok = a; \
 	if ( ok != cudaSuccess ) \
@@ -46,6 +48,13 @@
 	if ( ok != cudaSuccess ) \
 		fprintf(stderr, "-- Error CUDA last in line %d: %s\n", __LINE__, cudaGetErrorString( ok ) ); \
 	}
+
+#define CHECK_MPI_CALL(a) { \
+    if (a != MPI_SUCCESS) { \
+        fprintf(stderr, "[ERROR] Fatal error with MPI in line %d. Aborting\n", __LINE__); \
+        MPI_Abort(MPI_COMM_WORLD, a); \
+    } \
+}
 
 /* 
 Function showFileError: It displays the corresponding error during file reading.
@@ -357,8 +366,20 @@ __global__ void update_step_centroids(float* centroids_table, float* centroids, 
 }
 
 
-int main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
+
+    //  ###################################
+    //              MPI Section
+    //  ###################################
+
+    int init = MPI_Init(&argc, &argv);
+    CHECK_MPI_CALL(init);
+
+    int rank, comm_size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
+    MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
+
 
 	//START CLOCK***************************************
 	#ifdef _OPEN_MP
@@ -366,10 +387,10 @@ int main(int argc, char* argv[])
 		start = omp_get_wtime();
 	#else
 		clock_t start, end;
-		start = clock();
+		start = MPI_Wtime();
 	#endif
-
 	//**************************************************
+
 	/*
 	* PARAMETERS
 	*
@@ -385,70 +406,88 @@ int main(int argc, char* argv[])
 	*          algorithm stops.
 	* argv[6]: Output file. Class assigned to each point of the input file.
 	* */
-	if(argc !=  7)
-	{
-		fprintf(stderr,"EXECUTION ERROR K-MEANS: Parameters are not correct.\n");
-		fprintf(stderr,"./KMEANS [Input Filename] [Number of clusters] [Number of iterations] [Number of changes] [Threshold] [Output data file]\n");
-		fflush(stderr);
-		exit(-1);
-	}
 
-	// Reading the input data
-	// lines = number of points; samples = number of dimensions per point
-	int lines = 0, samples= 0;  
-	
-	int error = readInput(argv[1], &lines, &samples);
-	if(error != 0)
-	{
-		showFileError(error,argv[1]);
-		exit(error);
-	}
-	
-	float *data = (float*) calloc(lines * samples, sizeof(float));
-	if (data == NULL) {
-		fprintf(stderr,"Memory allocation error.\n");
-		exit(-4);
-	}
-	error = readInput2(argv[1], data);
-	if(error != 0)
-	{
-		showFileError(error,argv[1]);
-		exit(error);
-	}
+    // lines = number of points; samples = number of dimensions per point
+    int lines = 0, samples= 0;
+    int n, K, d;
+    void* partial_centroids;
 
-	// Parameters
-	int K = atoi(argv[2]); 
-	int maxIterations = atoi(argv[3]);
-	int minChanges = (int) (lines * atof(argv[4]) / 100.0);
-	float maxThreshold = atof(argv[5]);
+    // If your rank is 0...
+    if (rank == 0) {
+        // ...initialize the data
+        if (argc !=  7) {
+            fprintf(stderr,"EXECUTION ERROR K-MEANS: Parameters are not correct.\n");
+            fprintf(stderr,"./KMEANS [Input Filename] [Number of clusters] [Number of iterations] [Number of changes] [Threshold] [Output data file]\n");
+            fflush(stderr);
+            exit(-1);
+            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+        }
 
-	int *centroidPos = (int*) calloc(K, sizeof(int));
-	float *centroids = (float*) calloc(K * samples, sizeof(float));
-	int *classMap = (int*) calloc(lines, sizeof(int));
+        // Reading the input data
+        int error = readInput(argv[1], &lines, &samples);
+        if (error != 0) {
+            showFileError(error,argv[1]);
+            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+            exit(error);
+        }
+        
+        float *data = (float*) calloc(lines * samples, sizeof(float));
+        if (data == NULL) {
+            fprintf(stderr,"Memory allocation error.\n");
+            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+            exit(-4);
+        }
 
-    if (centroidPos == NULL || centroids == NULL || classMap == NULL)
-	{
-		fprintf(stderr, "Memory allocation error.\n");
-		exit(-4);
-	}
+        error = readInput2(argv[1], data);
+        if(error != 0) {
+            showFileError(error,argv[1]);
+            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+            exit(error);
+        }
+        
 
-	// Initial centrodis
-	srand(0);
-	int i;
-	for(i = 0; i < K; i++) 
-		centroidPos[i] = rand() % lines;
-	
-	// Loading the array of initial centroids with the data from the array data
-	// The centroids are points stored in the data array.
-	initCentroids(data, centroids, centroidPos, samples, K);
+        // Parameters
+        int K = atoi(argv[2]); 
+        int maxIterations = atoi(argv[3]);
+        int minChanges = (int) (lines * atof(argv[4]) / 100.0);
+        float maxThreshold = atof(argv[5]);
 
+        int *centroidPos = (int*) calloc(K, sizeof(int));
+        float *centroids = (float*) calloc(K * samples, sizeof(float));
+        int *classMap = (int*) calloc(lines, sizeof(int));
 
-	printf("\n    Input properties:");
-	printf("\n\tData file: %s \n\tPoints: %d\n\tDimensions: %d\n", argv[1], lines, samples);
-	printf("\tNumber of clusters: %d\n", K);
-	printf("\tMaximum number of iterations: %d\n", maxIterations);
-	printf("\tMinimum number of changes: %d [%g%% of %d points]\n", minChanges, atof(argv[4]), lines);
-	printf("\tMaximum centroid precision: %f\n", maxThreshold);
+        if (centroidPos == NULL || centroids == NULL || classMap == NULL) {
+            fprintf(stderr, "Memory allocation error.\n");
+            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+            exit(-4);
+        }
+
+        // Initial centrodis
+        srand(0);
+        int i;
+        for (i = 0; i < K; i++) 
+            centroidPos[i] = rand() % lines;
+        
+        // Loading the array of initial centroids with the data from the array data
+        // The centroids are points stored in the data array.
+        initCentroids(data, centroids, centroidPos, samples, K);
+
+        MPI_Send(centroids, K / 2, MPI_FLOAT, 1, 0, MPI_COMM_WORLD);
+
+        printf("\n    Input properties:");
+        printf("\n\tData file: %s \n\tPoints: %d\n\tDimensions: %d\n", argv[1], lines, samples);
+        printf("\tNumber of clusters: %d\n", K);
+        printf("\tMaximum number of iterations: %d\n", maxIterations);
+        printf("\tMinimum number of changes: %d [%g%% of %d points]\n", minChanges, atof(argv[4]), lines);
+        printf("\tMaximum centroid precision: %f\n", maxThreshold);
+    } else if (rank == 1) {
+        // Receive parameters n, K and d
+        MPI_
+
+        partial_centroids = malloc((K / 2) * sizeof(float));
+        MPI_Recv(partial_centroids, K / 2, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    }
+
 
 
 	// Check CUDA device properties
@@ -479,7 +518,7 @@ int main(int argc, char* argv[])
 	#ifdef _OPEN_MP
 		end = omp_get_wtime();
 	#else
-		end = clock();
+		end = MPI_Wtime();
 	#endif
 	printf("\nMemory allocation: %f seconds\n", end - start);
 	fflush(stdout);
@@ -491,7 +530,7 @@ int main(int argc, char* argv[])
 	#ifdef _OPEN_MP
 		start = omp_get_wtime();
 	#else
-		start = clock();
+		start = MPI_Wtime();
 	#endif
 	//**************************************************
 	char *outputMsg = (char *)calloc(100000,sizeof(char));
@@ -517,6 +556,10 @@ int main(int argc, char* argv[])
  * START HERE: DO NOT CHANGE THE CODE ABOVE THIS POINT
  *
  */
+
+    //  ###################################
+    //              CUDA Section
+    //  ###################################
 
 	// Set carveout to be of maximum size available
 	int carveout = cudaSharedmemCarveoutMaxShared;
@@ -623,7 +666,7 @@ int main(int argc, char* argv[])
 	#ifdef _OPEN_MP
 		end = omp_get_wtime();
 	#else
-		end = clock();
+		end = MPI_Wtime();
 	#endif
 	printf("\nComputation: %f seconds", end - start);
 	fflush(stdout);
@@ -632,7 +675,7 @@ int main(int argc, char* argv[])
 	#ifdef _OPEN_MP
 		start = omp_get_wtime();
 	#else
-		start = clock();
+		start = MPI_Wtime();
 	#endif
 	//**************************************************
 
@@ -680,10 +723,11 @@ int main(int argc, char* argv[])
 	#ifdef _OPEN_MP
 		end = omp_get_wtime();
 	#else
-		end = clock();
+		end = MPI_Wtime();
 	#endif
 	printf("\n\nMemory deallocation: %f seconds\n", end - start);
 	fflush(stdout);
 	//***************************************************/
+    MPI_Finalize();
 	return 0;
 }
