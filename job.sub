@@ -1,0 +1,14 @@
+universe = vanilla
+
+# Where should the output/error be saved
+log = logs/cuda_job.log
+output = logs/cuda_job.out
+error = logs/cuda_job.err
+
+# Request GPU resources
+request_gpus = 1
+
+# Specify any environment setup if needed
+getenv = True
+
+queue
