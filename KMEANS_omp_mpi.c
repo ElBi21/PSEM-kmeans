@@ -151,7 +151,6 @@ int writeResult(int *classMap, int lines, const char *filename)
 }
 
 /*
-
 Function initCentroids: This function copies the values of the initial centroids, using their
 position in the input data structure as a reference map.
 */
@@ -341,8 +340,14 @@ int main(int argc, char *argv[])
 	start = MPI_Wtime();
 	//**************************************************
 
-	char *outputMsg = (char *)calloc(10000, sizeof(char));
-	//	char line[100];
+	char *outputMsg = NULL;
+	//	char* line;
+
+	if (rank == 0)
+	{
+		outputMsg = (char *)calloc(10000, sizeof(char));
+		//		line = (char*) calloc(100, sizeof(char));
+	}
 
 	int it = 0;
 	int j, i;
@@ -537,16 +542,16 @@ int main(int argc, char *argv[])
 			// For each dimension...
 			for (j = 0; j < samples; j++)
 			{
-				// Compute the new centroid value by averaging
+				// Compute the new centroid value by averaging the coordinates
 				float centroid_val = auxCentroids[global_idx * samples + j] / pointsPerClass[global_idx];
-				// Compute the squared difference from the old centroid
+				// Compute the difference from the old centroid
 				float diff = centroids[global_idx * samples + j] - centroid_val;
 				distance += diff * diff;
-				// Update the local centroid with the new value
+				// Update the local centroid with the new value (coordinate)
 				local_centroids[i * samples + j] = centroid_val;
 			}
 
-			// Update the local maximum distance if necessary, for convergence check
+			// Update the local maximum distance if necessary, for later convergence check
 			if (distance > local_maxDist)
 			{
 				local_maxDist = distance;
@@ -583,7 +588,7 @@ int main(int argc, char *argv[])
 		sum += recvcounts[i];
 	}
 
-	// Gather all local_classMap arrays from each process into the classMap array on the root process
+	// Gather all local_classMap arrays from each process into the global classMap array on the root process
 	MPI_Gatherv(local_classMap, local_lines, MPI_INT, classMap, recvcounts, rdispls, MPI_INT, 0, MPI_COMM_WORLD);
 
 	// 	Output and termination conditions
@@ -614,15 +619,15 @@ int main(int argc, char *argv[])
 	{
 		if (changes <= minChanges)
 		{
-			printf("\n\nTermination condition:\nMinimum number of changes reached: %d [%d]", changes, minChanges);
+			printf("\n\nTermination condition: Minimum number of changes reached: %d [%d]", changes, minChanges);
 		}
 		else if (it >= maxIterations)
 		{
-			printf("\n\nTermination condition:\nMaximum number of iterations reached: %d [%d]", it, maxIterations);
+			printf("\n\nTermination condition: Maximum number of iterations reached: %d [%d]", it, maxIterations);
 		}
 		else
 		{
-			printf("\n\nTermination condition:\nCentroid update precision reached: %g [%g]", maxDist, maxThreshold);
+			printf("\n\nTermination condition: Centroid update precision reached: %g [%g]", maxDist, maxThreshold);
 		}
 
 		int error = writeResult(classMap, lines, argv[6]);
