@@ -436,7 +436,7 @@ int main(int argc, char *argv[])
 
 		// Gather all the changes from each process and sum them up
 		MPI_Request MPI_REQUEST; // Handle for the non-blocking reduction
-		// MPI_Ireduce initiates a non-blocking reduction operation where all processes contribute
+		// MPI_Iallreduce initiates a non-blocking reduction operation where all processes contribute
 		// their local_changes, and the sum is stored in 'changes' for all the process
 		MPI_Iallreduce(&local_changes, &changes, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD, &MPI_REQUEST);
 		
