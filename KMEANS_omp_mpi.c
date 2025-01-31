@@ -151,7 +151,6 @@ int writeResult(int *classMap, int lines, const char *filename)
 }
 
 /*
-
 Function initCentroids: This function copies the values of the initial centroids, using their
 position in the input data structure as a reference map.
 */
@@ -341,8 +340,14 @@ int main(int argc, char *argv[])
 	start = MPI_Wtime();
 	//**************************************************
 
-	char *outputMsg = (char *)calloc(10000, sizeof(char));
-	//	char line[100];
+	char *outputMsg = NULL;
+	//	char* line;
+
+	if (rank == 0)
+	{
+		outputMsg = (char *)calloc(10000, sizeof(char));
+		//		line = (char*) calloc(100, sizeof(char));
+	}
 
 	int it = 0;
 	int j, i;
@@ -406,8 +411,6 @@ int main(int argc, char *argv[])
 	// Allocate memory for local centroid updates
 	float *local_centroids = (float *)calloc(local_k * samples, sizeof(float));
 
-	int terminate;
-
 	do
 	{
 		it++; // Increment iteration counter
@@ -454,9 +457,9 @@ int main(int argc, char *argv[])
 
 		// Gather all the changes from each process and sum them up
 		MPI_Request MPI_REQUEST; // Handle for the non-blocking reduction
-		// MPI_Ireduce initiates a non-blocking reduction operation where all processes contribute
-		// their local_changes, and the sum is stored in 'changes' on the root process (rank 0)
-		MPI_Ireduce(&local_changes, &changes, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD, &MPI_REQUEST);
+		// MPI_Iallreduce initiates a non-blocking reduction operation where all processes contribute
+		// their local_changes, and the sum is stored in 'changes' for all the process
+		MPI_Iallreduce(&local_changes, &changes, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD, &MPI_REQUEST);
 
 		/* -------------------------------------------------------------------
 		 *    STEP 2: Recalculate centroids (cluster means)
@@ -537,16 +540,16 @@ int main(int argc, char *argv[])
 			// For each dimension...
 			for (j = 0; j < samples; j++)
 			{
-				// Compute the new centroid value by averaging
+				// Compute the new centroid value by averaging the coordinates
 				float centroid_val = auxCentroids[global_idx * samples + j] / pointsPerClass[global_idx];
-				// Compute the squared difference from the old centroid
+				// Compute the difference from the old centroid
 				float diff = centroids[global_idx * samples + j] - centroid_val;
 				distance += diff * diff;
-				// Update the local centroid with the new value
+				// Update the local centroid with the new value (coordinate)
 				local_centroids[i * samples + j] = centroid_val;
 			}
 
-			// Update the local maximum distance if necessary, for convergence check
+			// Update the local maximum distance if necessary, for later convergence check
 			if (distance > local_maxDist)
 			{
 				local_maxDist = distance;
@@ -554,23 +557,17 @@ int main(int argc, char *argv[])
 		}
 
 		// Reduce to find the maximum distance across all processes
-		MPI_Reduce(&local_maxDist, &maxDist, 1, MPI_FLOAT, MPI_MAX, 0, MPI_COMM_WORLD);
+		MPI_Allreduce(&local_maxDist, &maxDist, 1, MPI_FLOAT, MPI_MAX, MPI_COMM_WORLD);
 
 		// Gather all local centroids into the global centroids array
 		MPI_Allgatherv(local_centroids, local_k * samples, MPI_FLOAT, centroids, centroid_sendcounts, centroid_displs, MPI_FLOAT, MPI_COMM_WORLD);
 		// MPI_Allgatherv gathers variable amounts of data from all processes and distributes
 		// the combined data to all processes. This updates the centroids for the next iteration.
 
-		if (rank == 0)
-		{
-			// Wait for the non-blocking reduction to complete
-			MPI_Wait(&MPI_REQUEST, MPI_STATUS_IGNORE);
-			terminate = (changes > minChanges) && (it < maxIterations) && (maxDist > (maxThreshold * maxThreshold));
-		}
+		// Wait if the non-blocking reduction didn't complete
+		MPI_Wait(&MPI_REQUEST, MPI_STATUS_IGNORE);
 
-		// Check if all processes must exit the loop
-		MPI_Bcast(&terminate, 1, MPI_INT, 0, MPI_COMM_WORLD);
-	} while (terminate);
+	} while ((changes > minChanges) && (it < maxIterations) && (maxDist > (maxThreshold * maxThreshold)));
 
 	// Prepare to gather the class assignments from all processes
 	int *recvcounts = (int *)malloc(size * sizeof(int));
@@ -583,7 +580,7 @@ int main(int argc, char *argv[])
 		sum += recvcounts[i];
 	}
 
-	// Gather all local_classMap arrays from each process into the classMap array on the root process
+	// Gather all local_classMap arrays from each process into the global classMap array on the root process
 	MPI_Gatherv(local_classMap, local_lines, MPI_INT, classMap, recvcounts, rdispls, MPI_INT, 0, MPI_COMM_WORLD);
 
 	// 	Output and termination conditions
@@ -614,15 +611,15 @@ int main(int argc, char *argv[])
 	{
 		if (changes <= minChanges)
 		{
-			printf("\n\nTermination condition:\nMinimum number of changes reached: %d [%d]", changes, minChanges);
+			printf("\n\nTermination condition: Minimum number of changes reached: %d [%d]", changes, minChanges);
 		}
 		else if (it >= maxIterations)
 		{
-			printf("\n\nTermination condition:\nMaximum number of iterations reached: %d [%d]", it, maxIterations);
+			printf("\n\nTermination condition: Maximum number of iterations reached: %d [%d]", it, maxIterations);
 		}
 		else
 		{
-			printf("\n\nTermination condition:\nCentroid update precision reached: %g [%g]", maxDist, maxThreshold);
+			printf("\n\nTermination condition: Centroid update precision reached: %g [%g]", maxDist, maxThreshold);
 		}
 
 		int error = writeResult(classMap, lines, argv[6]);
