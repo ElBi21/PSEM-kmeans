@@ -312,12 +312,6 @@ int main(int argc, char *argv[])
 		exit(-4);
 	}
 
-	/*
-	 *
-	 * START HERE: DO NOT CHANGE THE CODE ABOVE THIS POINT
-	 *
-	 */
-
 	// Set the number of OpenMP threads
 	int threads = 8;
 	if (argc == 8)
@@ -478,11 +472,6 @@ int main(int argc, char *argv[])
 
 	} while ((changes > minChanges) && (it < maxIterations) && (maxDist > (maxThreshold * maxThreshold)));
 
-	/*
-	 *
-	 * STOP HERE: DO NOT CHANGE THE CODE BELOW THIS POINT
-	 *
-	 */
 	// Output and termination conditions
 	printf("%s", outputMsg);
 
