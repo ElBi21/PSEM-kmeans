@@ -12,14 +12,14 @@ input_files = [
     "input100D.inp",
     "input100D2.inp"
 ]
-process_counts = [2, 3, 4, 6]
+process_counts = [1]
 
 # Regular expression to extract computation time for Rank 0
-time_pattern = r"0 \|Computation: ([0-9]+\.[0-9]+) seconds"
+time_pattern = r"Computation: ([0-9]+\.[0-9]+) seconds"
 
 # Function to execute the command and collect computation times
 def run_experiment(input_file, num_processes):
-    command = f"mpirun -np {num_processes} ./KMEANS_mpi.out test_files/{input_file} 40 5000 1 0.0001 output_files/out_{input_file}_mpi.txt"
+    command = f"./KMEANS_seq.out test_files/{input_file} 40 5000 1 0.0001 output_files/out_{input_file}_seq.txt"
     computation_times = []
 
     for process in range(50):
