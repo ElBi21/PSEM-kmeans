@@ -519,9 +519,8 @@ int main(int argc, char* argv[]) {
 
 
 	MPI_Bcast(centroids, K * samples, MPI_FLOAT, 0, MPI_COMM_WORLD);
+	printf("[%d/%d] Part 0\n", rank + 1, comm_size);
 	MPI_Scatter(data, lines * samples, MPI_FLOAT, partial_data, local_n * samples, MPI_FLOAT, 0, MPI_COMM_WORLD);	
-
-
 	
 	//END CLOCK*****************************************
 	#ifdef _OPEN_MP
@@ -596,6 +595,8 @@ int main(int argc, char* argv[]) {
 
 	int data_size = lines * samples * sizeof(float);
 	int centroids_size = K * samples * sizeof(float);
+	
+	int shared_size = centroids_size / comm_size;
 
 	// GPU pointers
 	float* gpu_data;
@@ -626,13 +627,13 @@ int main(int argc, char* argv[]) {
 	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_centroids, centroids_size));
 	CHECK_CUDA_CALL(cudaMemcpy(gpu_centroids, centroids, centroids_size, cudaMemcpyHostToDevice));
 
-	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_data, data_size / comm_size));
+	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_data, data_size / comm_size * sizeof(float)));
 	CHECK_CUDA_CALL(cudaMemcpy(gpu_data, partial_data, data_size / comm_size, cudaMemcpyHostToDevice));
 	
 	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_class_map, lines / comm_size * sizeof(int)));
 	CHECK_CUDA_CALL(cudaMemset(gpu_class_map, 0, lines / comm_size * sizeof(int)));
 	
-	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_centroids_temp, centroids_size / comm_size));
+	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_centroids_temp, centroids_size / comm_size * sizeof(float)));
 	CHECK_CUDA_CALL(cudaMemset(gpu_centroids_temp, 0, centroids_size / comm_size));
 
 	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_points_per_class, K / comm_size * sizeof(int)));
@@ -662,10 +663,16 @@ int main(int argc, char* argv[]) {
 
 		// 1. Calculate the distance from each point to the centroid
 
+		printf("[%d/%d] Part 1\n", rank + 1, comm_size);
+
 		// Assign each point to the nearest centroid.
-		step_1_kernel<<<dyn_grid_pts, gen_block, centroids_size / comm_size>>>(gpu_data, gpu_centroids, gpu_points_per_class,
+		step_1_kernel<<<dyn_grid_pts, gen_block, shared_size>>>(gpu_data, gpu_centroids, gpu_points_per_class,
 			gpu_centroids_temp, gpu_class_map, gpu_changes);
 		CHECK_CUDA_LAST();
+
+		CHECK_CUDA_CALL(cudaDeviceSynchronize());
+
+		printf("[%d/%d] Part 2\n", rank + 1, comm_size);
 
 		//int* local_points_per_class;
 		MPI_Request MPI_changes_reduce_handler;

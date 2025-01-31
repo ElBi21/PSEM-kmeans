@@ -20,7 +20,7 @@
 \usepackage{tcolorbox}
 \usepackage[dvipsnames]{xcolor}
 \usepackage[ruled]{algorithm2e}
-\usepackage{caption}
+%\usepackage{caption}
 %\usepackage{biblatex}
 
 %\addbibresource{bibliography.bib}
@@ -120,7 +120,7 @@ Many people prefer to use other clustering methods, such as the fitting of Gauss
 The $k$-means algorithm can be described with the following pseudocode, where $X$ is the set of data points, $C = \{\mu_1, \; \mu_2, \; ..., \; \mu_k \}$ is the set of centroids and $Y$ is the set of assignments:
 
 \begin{algorithm}
-    \label{alg:kmeans}
+    \label{algkmeans}
     \LinesNumbered
     \tcp{Initialize the centroids}
     \For{$k$ in $[1, \; |C|]$}{
@@ -157,7 +157,7 @@ The algorithm consists of 4 main blocks:
 
 For implementing the $k$-means algorithm, we will base all the codebase upon the project made from professors Diego García-Álvarez and Arturo Gonzalez-Escribano from the University of Valladolid. The code shown in this subsection is taken from their project, although slightly adapted for giving enough context in the code snippets.
 \nwl
-We described before the overall structure of the $k$-means algorithm: we will now proceed to examine its two main bottlenecks. As we can see from Algorithm \ref{alg:kmeans}, we have two main blocks that may cause performance issues: the \textbf{assignment block} and the \textbf{update block}.
+We described before the overall structure of the $k$-means algorithm: we will now proceed to examine its two main bottlenecks. As we can see from Algorithm \ref{algkmeans}, we have two main blocks that may cause performance issues: the \textbf{assignment block} and the \textbf{update block}.
 \nwl
 The first \textbf{for} block in the \textbf{initialization step} does not represent a major bottleneck, since it just needs to assign a random location to each of the $K$ centroids. It can be parallelized, but it won't help as much as parallelizing the two steps mentioned before.
 \nwl
