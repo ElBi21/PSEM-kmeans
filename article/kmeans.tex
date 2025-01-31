@@ -20,6 +20,7 @@
 \usepackage{tcolorbox}
 \usepackage[dvipsnames]{xcolor}
 \usepackage[ruled]{algorithm2e}
+\usepackage{caption}
 %\usepackage{biblatex}
 
 %\addbibresource{bibliography.bib}
@@ -66,6 +67,8 @@
 }
 
 \lstset{style=standstyle}
+
+%\newfloat{Code}{htbp}{loa}
 
 \DeclareMathAlphabet{\mathcal}{OMS}{zplm}{m}{n}
 \DeclareMathOperator*{\argmax}{arg\,max}
@@ -224,25 +227,27 @@ for (i = 0; i < K; i++) {
 
 \section{Parallelizing with OpenMP}
 
-To enhance the performance of the $k$-means algorithm, we employed OpenMP for parallelization. OpenMP is a widely-used API for multi-platform shared-memory parallel programming. Our primary goal was to leverage multiple CPU cores to expedite the computationally intensive parts of the algorithm: the \textbf{cluster assignment} and \textbf{centroid update} steps. The number of threads can be optionally specified as a parameter; if not provided, a default value (i.e. 8 threads) is used for parallel execution.
-
+As a mean of enhancing the performance of the $k$-means algorithm, we made use of the multi-thread library OpenMP. OpenMP is a widely-used API for multi-platform shared-memory parallel programming. Our primary goal was to leverage multiple CPU cores to expedite the computationally intensive parts of the algorithm: the \textbf{cluster assignment} and \textbf{centroid update} steps. The number of threads can be optionally specified as a parameter; if not provided, a default value (i.e. 8 threads) is used for parallel execution.
+We now show how we approached the parallelization of the program, and the advantages of taking certain design decisions.
+ 
 \subsection{OpenMP Implementation Approach}
 
-\textbf{1. Cluster Assignment:}  
-The cluster assignment step is inherently parallelizable since each data point can be processed independently. We utilized the \texttt{\# pragma omp parallel for} directive to distribute the loop iterations across multiple threads.
-\begin{itemize}
-\item \textbf{Reduction Clause}: The \texttt{reduction(+ : changes)} clause safely aggregates the total number of cluster reassignments across threads. This avoids race conditions by creating thread-private copies of \texttt{changes} that are combined after the loop.
-\item \textbf{Dynamic Scheduling}: The \texttt{schedule(dynamic, 16)} clause improves load balancing by allowing threads to dynamically claim "chunks" of 16 iterations.
-\end{itemize}
+\noindent \textbf{1. Cluster Assignment:} the cluster assignment step is inherently parallelizable since each data point can be processed independently. We made use of the \texttt{\#pragma omp parallel for} directive to distribute the loop iterations across multiple threads. Said directive has been accompanied by the following clauses:
 
-\textbf{2. Centroid Update:}  
-The centroid update step involves two parallel phases: accumulating cluster sums and normalizing centroids. Here, we addressed potential race conditions through privatization and synchronization:
 \begin{itemize}
-\item \textbf{Privatization with Local Buffers}: Each thread maintains private copies of \texttt{local\_pointsPerClass} (count of points assigned to the cluster) and \texttt{local\_auxCentroids} (cumulative sum of data points for each cluster). This eliminates races during local accumulation, as threads operate on isolated data.
-\item \textbf{Critical Section for Global Aggregation}: After local accumulation, a \texttt{\#pragma omp critical} region safely merges thread-local results into global \texttt{pointsPerClass} and \texttt{auxCentroids}. While critical sections incur synchronization overhead, they are used sparingly here—once per thread—minimizing contention.
-\item \textbf{Parallel Mean Calculation}: The final centroid normalization loop (\texttt{\#pragma omp parallel for}) parallelizes the division by \texttt{pointsPerClass}, avoiding race conditions since each cluster is processed independently.
+    \item \texttt{reduction(+ : changes)}: the \textbf{reduction clause} safely aggregates the total number of cluster reassignments across threads. This avoids race conditions by creating thread-private copies of \texttt{changes} that are combined after the loop;
+    \item \texttt{schedule(dynamic, 16)}: the \textbf{dynamic scheduling} clause improves load balancing by allowing threads to dynamically claim "chunks" of 16 iterations.
 \end{itemize}
+\nwl
+\noindent \textbf{2. Centroid Update:} the centroid update step involves two parallel phases: gathering cluster sums and averaging the centroids coordinates. Here, we addressed potential race conditions through privatization and synchronization:
+\begin{itemize}
+    \item \textbf{Privatization with Local Buffers}: Each thread maintains private copies of two buffers, namely \texttt{local\_pointsPerClass} (count of points assigned to the cluster) and \texttt{local\_auxCentroids} (cumulative sum of data points for each cluster). This eliminates races during local accumulation, as threads operate on isolated data;
+    \item \textbf{Critical Section for Global Aggregation}: After local accumulation, a \texttt{\#pragma omp critical} region safely merges thread-local results into global \texttt{pointsPerClass} and \texttt{auxCentroids}. While critical sections incur synchronization overhead, they are used sparingly here once per thread in order to minimize contention;
+    \item \textbf{Parallel Mean Calculation}: The final centroid normalization loop (\texttt{\#pragma omp parallel for}) parallelizes the division by \texttt{pointsPerClass}, avoiding race conditions since each cluster is processed independently.
+\end{itemize}
+\nwl
 An alternative approach that we experimented with uses the reduction feature to eliminate the need for explicit synchronization.
+
 \begin{lstlisting}[language = C]
 #pragma omp parallel for reduction(+ : pointsPerClass[ : K], auxCentroids[ : K * samples])
 		for (i = 0; i < lines; i++)
@@ -254,35 +259,112 @@ An alternative approach that we experimented with uses the reduction feature to 
 				auxCentroids[class * samples + j] += data[i * samples + j];
 			}
 		}\end{lstlisting}
+\nwl
 The reduction clause automates the process of merging thread-local results into shared variables. By reducing both \texttt{pointsPerClass} and \texttt{auxCentroids}, the need for a critical section is removed, potentially lowering synchronization overhead.
 However, we chose the original approach with explicit privatization and critical regions to demonstrate proficiency with OpenMP synchronization and race condition management. 
-
-The maximum centroid displacement (\texttt{maxDist}) is computed serially. While this loop could be parallelized using \texttt{\#pragma omp parallel for reduction(max : maxDist)}, we retained the serial approach for simplicity, as its computational cost is negligible compared to other steps and because the number of clusters $k$ is typically small, the overhead associated with parallelization outweighs the potential performance gains.
+\nwl
+The maximum centroid displacement (\texttt{maxDist}) is computed serially. While this loop could be parallelized using the \texttt{\#pragma omp parallel for reduction(max : maxDist)} directive, we retained the serial approach for simplicity, as its computational cost is negligible compared to other steps and because the number of clusters $k$ is typically small, the overhead associated with parallelization outweighs the potential performance gains.
 
 \subsection{Solutions Implemented}
+
 \begin{itemize}
-\item \textbf{Reduction for Scalars}: The \texttt{changes} variable uses a \texttt{reduction} clause, which is more efficient than atomic operations for scalar summation. OpenMP handles private copies and post-loop merging automatically.
-\item \textbf{Privatization and Critical Sections}: For array/matrix updates (e.g., \texttt{auxCentroids}), thread-local buffers reduce the need for fine-grained synchronization. The critical section ensures safe aggregation with minimal overhead, as it is invoked only once per thread.
-\item \textbf{Atomic Operations vs. Critical Regions}: While atomic operations (e.g., \texttt{\#pragma omp atomic}) could replace the critical section for scalar increments (\texttt{pointsPerClass}), they would be inefficient for matrix additions (\texttt{auxCentroids}) due to repeated fine-grained locking. Privatization strikes a better balance between correctness and performance.
+    \item \textbf{Reduction for Scalars}: The \texttt{changes} variable uses a \texttt{reduction} clause, which is more efficient than atomic operations for scalar summation. OpenMP handles private copies and post-loop merging automatically.
+    \item \textbf{Privatization and Critical Sections}: For array/matrix updates (i.e., \texttt{auxCentroids}), thread-local buffers reduce the need for fine-grained synchronization. The critical section ensures safe aggregation with minimal overhead, as it is invoked only once per thread.
+    \item \textbf{Atomic Operations vs. Critical Regions}: While atomic operations (i.e., \texttt{\#pragma omp atomic}) could replace the critical section for scalar increments (\texttt{pointsPerClass}), they would be inefficient for matrix additions (\texttt{auxCentroids}) due to repeated fine-grained locking. Privatization strikes a better balance between correctness and performance.
 \end{itemize}
 
 \subsection{Performance Considerations}
 
 \begin{itemize}
-\item \textbf{Critical Section Overhead}: The single critical section per thread during centroid aggregation has negligible cost compared to the computational work, as merging local buffers is a minor operation.
-\item \textbf{Memory Efficiency}: Privatizing \texttt{local\_auxCentroids} per thread increases memory usage proportionally to the number of threads. However, this is manageable for moderate thread counts and cluster sizes.
-\item \textbf{Dynamic Scheduling Trade-off}: While dynamic scheduling improves load balancing, it introduces overhead for chunk management. A chunk size of 16 was empirically chosen to balance parallelism and scheduling latency.
+    \item \textbf{Critical Section Overhead}: The single critical section per thread during centroid aggregation has negligible cost compared to the computational work, as merging local buffers is a minor operation.
+    \item \textbf{Memory Efficiency}: Privatizing per thread the \texttt{local\_auxCentroids} buffer increases memory usage proportionally to the number of threads. However, this is manageable for moderate thread counts and cluster sizes.
+    \item \textbf{Dynamic Scheduling Trade-off}: While dynamic scheduling improves load balancing, it introduces overhead for chunk management. A chunk size of 16 was empirically chosen to balance parallelism and scheduling latency.
 \end{itemize}
-
-\subsection{Conclusion}
-
-The OpenMP-based parallelization of the $k$-means algorithm effectively mitigates race conditions through a combination of reduction clauses, thread-local privatization, and strategic critical sections. These strategies not only ensured the correctness of the computations but also optimized performance by minimizing synchronization overhead.
 
 \section{Parallelizing with CUDA}
 
 \section{Interlacing Multi-processing with Multi-threading}
 
+So far, we implemented various solutions for our programs, which employed either multi-processing or multi-threading parallelism techniques, without using both approaches at the same time. However, these techniques are not mutually exclusive, and can be mixed together in order to achieve better performances. In fact, in high performance computing tasks, multi-process techniques are used within clusters to connect nodes and coordinate them, while multi-threading are used for performing computations, given the directives of the master process(es). In this section we will show how the two multi-threading approaches that we previously considered (namely, OpenMP and CUDA) can be combined with the famous multi-processing library MPI.
+
 \subsection{MPI and OpenMP}
+
+The hybrid MPI $+$ OpenMP implementation of the $k$-means clustering algorithm leverages both distributed and shared memory parallelism to enhance performance and scalability. Our parallelization strategy can be described with three main key points:
+\nwl
+\noindent \textbf{Two-Level Parallelism}
+\begin{itemize}
+    \item MPI distributes data across processes (coarse-grained parallelism) with \texttt{MPI\_Scatterv}, a vector scattering collective, while OpenMP parallelizes loops within each process (allowing for a much fine-grained parallelism);
+    \item Thread safety: all the processes are initialized with \texttt{MPI\_THREAD\_FUNNELED}, so that to restrict MPI calls to the main thread.
+\end{itemize}
+\nwl
+\noindent \textbf{Asynchronous Communication}
+
+The non-blocking reduce operation \texttt{MPI\_Ireduce} aggregates cluster reassignment counts while centroid updates proceed, allowing to overlap communication and computation.
+\nwl
+\noindent \textbf{Hybrid Reductions}
+\begin{itemize}
+    \item OpenMP sets thread-local buffers in order to avoid intra-node races. More specifically, the \texttt{local\_pointsPerClass} and the \texttt{local\_auxCentroids} buffers; 
+    \item Global aggregations via \texttt{MPI\_Allreduce} ensures consistent centroid states across nodes.
+\end{itemize}
+\nwl
+\begin{lstlisting}[language=C]
+#pragma omp parallel  // Thread-local accumulation
+{ 
+    int *local_pointsPerClass = calloc(K, sizeof(int)); 
+    float *local_auxCentroids = (float *)calloc(K * samples, sizeof(float));
+    // ...
+}
+
+// Global sync
+MPI_Allreduce(MPI_IN_PLACE, pointsPerClass, K, MPI_INT, MPI_SUM, MPI_COMM_WORLD); 
+MPI_Allreduce(MPI_IN_PLACE, auxCentroids, K * samples, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);\end{lstlisting}
+\nwl
+A major concern while designing this application was also ensuring that an efficient \textbf{data distribution} system was in place. We show, in the following two key points, how we tackled this problem:
+\nwl
+\noindent \textbf{Balanced Workloads}:
+\begin{itemize}
+    \item The \texttt{MPI\_Scatterv} collective allows to split data into chunks, adjusted via two parameters: \texttt{sendcounts} and \texttt{displs}. Said collective is capable of handling uneven divisions, ensuring balanced workloads even when the total data points (\texttt{lines}) are not evenly divisible by the number of processes.
+    \item Each process computes locally the updates for a subset of centroids. These partial updates are then gathered from all processes and redistributed to ensure that every process has the complete and updated set of centroids for the next iteration, using \texttt{MPI\_Allgatherv}. We report here the full collective call:
+\begin{lstlisting}[language = C]
+MPI_Allgatherv(local_centroids, local_k * samples, MPI_FLOAT, centroids, centroid_sendcounts, centroid_displs, MPI_FLOAT, MPI_COMM_WORLD);
+\end{lstlisting}
+\end{itemize}
+\nwl
+\noindent \textbf{Final Result Aggregation}
+
+After convergence, the \texttt{MPI\_Gatherv} collective reconstructs the global cluster assignments on the root process. Each process sends its own \texttt{local\_classMap} (containing classifications for its local data subset), and the root process assembles them into \texttt{classMap} using the precomputed \texttt{recvcounts} and \texttt{rdispls} offsets. Below the code snippet, which shows how the \texttt{MPI\_Gatherv} call was assembled, we give more precise definitions regarding the two offsets aforementioned:
+\nwl
+\begin{lstlisting}[language = C]
+// Gather local classifications into root's classMap
+MPI_Gatherv(local_classMap, local_lines, MPI_INT, classMap, recvcounts, rdispls, MPI_INT, 0, MPI_COMM_WORLD);
+\end{lstlisting}
+\nwl
+\begin{itemize}
+    \item \texttt{recvcounts}: array specifying the number of elements received from each process (matches \texttt{sendcounts} from initial scatter);
+    \item \texttt{rdispls}: offsets in \texttt{classMap} where each process' data is stored.
+\end{itemize}
+\nwl
+These offsets ensures efficient reconstruction of the global result without requiring intermediate storage on worker processes.
+\nwl
+\noindent \textbf{Memory Efficiency}:
+\begin{itemize}
+    \item Each process stores only its local data (\texttt{local\_points}) and centroid subset (\texttt{local\_centroids}).
+    \item Thread-local buffers minimize shared memory contention without atomic operations.
+\end{itemize}
+\end{itemize}
+\nwl
+How did we approach \textbf{synchronization and termination}? %TODO
+\nwl
+\noindent \textbf{Convergence Check}:
+\begin{itemize}
+    \item OpenMP's \texttt{reduction(max:local\_maxDist)} computes per-process centroid displacements.
+    \item \texttt{MPI\_Reduce} finds the global maximum displacement for termination decisions.
+\end{itemize}
+\nwl
+\noindent \textbf{Termination Broadcast}
+
+Root process evaluates conditions and broadcasts \texttt{terminate} flag via \texttt{MPI\_Bcast}, ensuring synchronized loop exits.
+
 \subsection{MPI and CUDA}
 
 \section{Performance Analysis}

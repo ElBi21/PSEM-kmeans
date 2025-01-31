@@ -244,6 +244,8 @@ void zeroIntArray(int *array, int size) {
 __constant__ int gpu_K;
 __constant__ int gpu_n;
 __constant__ int gpu_d;
+__constant__ int gpu_comm_size;
+__constant__ int gpu_rank;
 
 /*  To each thread, a point with D dimensions gets assigned. The thread must compute the
  *  l_2 norm and take the minimum. Then, for each such point, get the associated cluster,
@@ -280,7 +282,7 @@ __global__ void step_1_kernel(float* data, float* centroids, int* points_per_cla
 		shared_centroids[copy_index] = centroids[copy_index];
 	}
 
-	if (thread_index < gpu_n) {
+	if ((gpu_n / gpu_comm_size) * gpu_rank <= thread_index && thread_index < (gpu_n / gpu_comm_size) * (gpu_rank + 1)) {
 		int data_index = thread_index * gpu_d;
 		int class_int = class_map[thread_index];
 		float min_dist = FLT_MAX;
@@ -340,7 +342,7 @@ __global__ void step_2_kernel(float* centroids_table, float* centroids, int* poi
 							(threadIdx.y * blockDim.x) +
 							threadIdx.x;
 	
-	if (thread_index < gpu_K) {
+	if ((gpu_K / gpu_comm_size) * gpu_rank <= thread_index && thread_index < (gpu_K / gpu_comm_size) * (gpu_rank + 1)) {
 		float distance;
 		for (int d = 0; d < gpu_d; d++) {
 			centroids_table[thread_index * gpu_d + d] /= (float) points_per_class[thread_index];
@@ -405,8 +407,6 @@ int main(int argc, char* argv[]) {
 
 	float* data;
 	float* centroids;
-
-    void* partial_centroids;	// Will hold K / size items
 
     // If your rank is 0...
     if (rank == 0) {
@@ -502,9 +502,21 @@ int main(int argc, char* argv[]) {
 	}
 
 	int local_n = lines / comm_size;
+	float* local_centroids = (float*) calloc((K * samples) / comm_size, sizeof(float));		// Will hold K / size items
 	float* partial_data = (float*) calloc(local_n * samples, sizeof(float));
+	int local_changes = 0;
+	float local_max_distance = FLT_MIN;
+
 	int *pointsPerClass = (int*) malloc(K * sizeof(int)); 
 	float *auxCentroids = (float*) malloc(K * samples * sizeof(float)); 
+	int* centroids_send = (int*) calloc(comm_size, sizeof(int));
+	int* centroids_displ = (int*) calloc(comm_size, sizeof(int));
+
+	for (int i = 0; i < comm_size; i++) {
+		centroids_send[i] = (K * samples) / comm_size;
+		centroids_displ[i] = (K * samples) / comm_size * rank;
+	}
+
 
 	MPI_Bcast(centroids, K * samples, MPI_FLOAT, 0, MPI_COMM_WORLD);
 	MPI_Scatter(data, lines * samples, MPI_FLOAT, partial_data, local_n * samples, MPI_FLOAT, 0, MPI_COMM_WORLD);	
@@ -634,6 +646,7 @@ int main(int argc, char* argv[]) {
 	CHECK_CUDA_CALL(cudaMemcpyToSymbol(gpu_K, &K, sizeof(int)));
 	CHECK_CUDA_CALL(cudaMemcpyToSymbol(gpu_n, &lines, sizeof(int)));
 	CHECK_CUDA_CALL(cudaMemcpyToSymbol(gpu_d, &samples, sizeof(int)));
+	CHECK_CUDA_CALL(cudaMemcpyToSymbol(gpu_comm_size, &comm_size, sizeof(int)));
 
 	do {
 		it++;
@@ -654,33 +667,47 @@ int main(int argc, char* argv[]) {
 			gpu_centroids_temp, gpu_class_map, gpu_changes);
 		CHECK_CUDA_LAST();
 
-		int* local_changes;
-		int* local_points_per_class;
+		//int* local_points_per_class;
 		MPI_Request MPI_changes_reduce_handler;
 
-		CHECK_CUDA_CALL(cudaMemcpy(local_changes, gpu_changes, sizeof(int), cudaMemcpyDeviceToHost));
+		CHECK_CUDA_CALL(cudaMemcpy(&local_changes, gpu_changes, sizeof(int), cudaMemcpyDeviceToHost));
 		CHECK_CUDA_CALL(cudaMemcpy(pointsPerClass, gpu_points_per_class, K * sizeof(int), cudaMemcpyDeviceToHost));
 		CHECK_CUDA_CALL(cudaMemcpy(auxCentroids, gpu_centroids_temp, K * samples * sizeof(float), cudaMemcpyDeviceToHost));
 		
 		// Write down to host the changes for checking convergence condition after waiting for GPU
 		CHECK_CUDA_CALL(cudaDeviceSynchronize());
 		
-		MPI_Ireduce(local_changes, &changes, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD, &MPI_changes_reduce_handler);
+		MPI_Ireduce(&local_changes, &changes, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD, &MPI_changes_reduce_handler);
 		MPI_Allreduce(MPI_IN_PLACE, pointsPerClass, K, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 		MPI_Allreduce(MPI_IN_PLACE, auxCentroids, K * samples, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
 
 		// 2. Recalculates the centroids: calculates the mean within each cluster
-        
+
 		// Perform the second update step, on the centroids
-		step_2_kernel<<<dyn_grid_cent, gen_block>>>(gpu_centroids_temp, gpu_centroids, gpu_points_per_class, gpu_max_distance);
+		step_2_kernel<<<dyn_grid_cent, gen_block>>>(gpu_centroids_temp + (K * samples / comm_size) * rank,
+			gpu_centroids + (K * samples / comm_size) * rank, gpu_points_per_class + (K / comm_size) * rank,
+			gpu_max_distance);
 		CHECK_CUDA_LAST();
 
-		// Update effectively the positions and take maxDist
-		CHECK_CUDA_CALL(cudaMemcpy(&maxDist, gpu_max_distance, sizeof(float), cudaMemcpyDeviceToHost));
-		CHECK_CUDA_CALL(cudaMemcpy(gpu_centroids, gpu_centroids_temp, centroids_size, cudaMemcpyDeviceToDevice));
-		
 		CHECK_CUDA_CALL(cudaDeviceSynchronize());
 
+		// Update effectively the positions and take maxDist
+		CHECK_CUDA_CALL(cudaMemcpy(&local_max_distance, gpu_max_distance, sizeof(float), cudaMemcpyDeviceToHost));
+		CHECK_CUDA_CALL(cudaMemcpy(&local_centroids, gpu_centroids + (K * samples / comm_size) * rank,
+			(K * samples) / comm_size * sizeof(float), cudaMemcpyDeviceToHost));
+
+		CHECK_CUDA_CALL(cudaDeviceSynchronize());
+		
+		// Send max distance
+		MPI_Reduce(&local_max_distance, &maxDist, 1, MPI_FLOAT, MPI_MAX, 0, MPI_COMM_WORLD);
+
+		// Collect all centroids into a single matrix
+		MPI_Allgatherv(local_centroids, (K * samples) / comm_size, MPI_FLOAT, centroids, centroids_send, centroids_displ, MPI_FLOAT, MPI_COMM_WORLD);
+
+		// Send them on GPU
+		CHECK_CUDA_CALL(cudaMemcpy(gpu_centroids, centroids, centroids_size, cudaMemcpyHostToDevice));
+
+		CHECK_CUDA_CALL(cudaDeviceSynchronize());
 		sprintf(line,"\n[%d] Cluster changes: %d\tMax. centroid distance: %f", it, changes, maxDist);
 		outputMsg = strcat(outputMsg, line);
 
@@ -717,10 +744,7 @@ int main(int argc, char* argv[]) {
 	//**************************************************
 
 	if (rank == 0) {
-		int* classMap;
-
-
-
+		int* classMap = (int*) calloc(lines, sizeof(int));
 
 		if (changes <= minChanges) {
 			printf("\n\nTermination condition:\nMinimum number of changes reached: %d [%d]", changes, minChanges);
