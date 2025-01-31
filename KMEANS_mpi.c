@@ -392,8 +392,6 @@ int main(int argc, char *argv[])
 	// Allocate memory for local centroid updates
 	float *local_centroids = (float *)calloc(local_k * samples, sizeof(float));
 
-	int terminate;
-
 	do
 	{
 		it++; // Increment iteration counter
@@ -439,8 +437,8 @@ int main(int argc, char *argv[])
 		// Gather all the changes from each process and sum them up
 		MPI_Request MPI_REQUEST; // Handle for the non-blocking reduction
 		// MPI_Ireduce initiates a non-blocking reduction operation where all processes contribute
-		// their local_changes, and the sum is stored in 'changes' on the root process (rank 0)
-		MPI_Ireduce(&local_changes, &changes, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD, &MPI_REQUEST);
+		// their local_changes, and the sum is stored in 'changes' for all the process
+		MPI_Iallreduce(&local_changes, &changes, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD, &MPI_REQUEST);
 		
 		/* -------------------------------------------------------------------
 		 *    STEP 2: Recalculate centroids (cluster means)
@@ -508,23 +506,19 @@ int main(int argc, char *argv[])
 		}
 
 		// Reduce to find the maximum distance across all processes
-		MPI_Reduce(&local_maxDist, &maxDist, 1, MPI_FLOAT, MPI_MAX, 0, MPI_COMM_WORLD);
+		MPI_Allreduce(&local_maxDist, &maxDist, 1, MPI_FLOAT, MPI_MAX, MPI_COMM_WORLD);
 
+		// Wait for the non-blocking reduction to complete
+		
 		// Gather all local centroids into the global centroids array
 		MPI_Allgatherv(local_centroids, local_k * samples, MPI_FLOAT, centroids, centroid_sendcounts, centroid_displs, MPI_FLOAT, MPI_COMM_WORLD);
 		// MPI_Allgatherv gathers variable amounts of data from all processes and distributes
 		// the combined data to all processes. This updates the centroids for the next iteration.
 		
-		if (rank == 0)
-		{
-			// Wait for the non-blocking reduction to complete
-			MPI_Wait(&MPI_REQUEST, MPI_STATUS_IGNORE);
-			terminate = (changes > minChanges) && (it < maxIterations) && (maxDist > maxThreshold);
-		}
+		// Wait if the non-blocking reduction didn't complete
+		MPI_Wait(&MPI_REQUEST, MPI_STATUS_IGNORE);
 
-		// Check if all processes must exit the loop
-		MPI_Bcast(&terminate, 1, MPI_INT, 0, MPI_COMM_WORLD);
-	} while (terminate);
+	} while ((changes > minChanges) && (it < maxIterations) && (maxDist > maxThreshold*maxThreshold));
 
 	// Prepare to gather the class assignments from all processes
 	int *recvcounts = (int *)malloc(size * sizeof(int));
@@ -539,7 +533,7 @@ int main(int argc, char *argv[])
 
 	// Gather all local_classMap arrays from each process into the global classMap array on the root process
 	MPI_Gatherv(local_classMap, local_n, MPI_INT, classMap, recvcounts, rdispls, MPI_INT, 0, MPI_COMM_WORLD);
-
+	
 	// 	Output and termination conditions
 	if (rank == 0)
 	{
