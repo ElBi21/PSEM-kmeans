@@ -5,24 +5,20 @@ import pandas as pd
 
 # Define input files and process counts
 input_files = [
-    "input2D.inp",
-    "input2D2.inp",
-    "input10D.inp",
-    "input20D.inp",
     "input100D.inp",
     "input100D2.inp"
 ]
-process_counts = [5, 7, 8, 9, 10, 11, 12]
+process_counts = [i for i in range(2, 13)]
 
 # Regular expression to extract computation time for Rank 0
 time_pattern = r"Computation: ([0-9]+\.[0-9]+) seconds"
 
 # Function to execute the command and collect computation times
 def run_experiment(input_file, num_processes):
-    command = f"mpirun --oversubscribe -n {num_processes} ./KMEANS_mpi.out test_files/{input_file} 40 5000 1 0.0001 output_files/out_{input_file}_mpi.txt"
+    command = f"./KMEANS_omp.out test_files/{input_file} 40 5000 1 0.0001 output_files/out_{input_file}_mpi.txt {num_processes}"
     computation_times = []
 
-    for process in range(50):
+    for process in range(20):
         try:
             # Execute the command and capture the output
             result = subprocess.run(command, shell=True, capture_output=True, text=True)

@@ -230,11 +230,11 @@ __constant__ int gpu_d;
  *  (User link: https://stackoverflow.com/users/2451683/vinograd47)
  */
 __device__ float custom_atomic_max(float* value_address, float val) {
-    int* address_as_i = (int*) value_address;
-    int old = *address_as_i, assumed;
+    int* address_as_int = (int*) value_address;
+    int old = *address_as_int, assumed;
     do {
         assumed = old;
-        old = atomicCAS(address_as_i, assumed, __float_as_int(fmaxf(val, __int_as_float(assumed))));
+        old = atomicCAS(address_as_int, assumed, __float_as_int(fmaxf(val, __int_as_float(assumed))));
     } while (assumed != old);
     return __int_as_float(old);
 }
@@ -252,7 +252,7 @@ __device__ float custom_atomic_max(float* value_address, float val) {
  *  Returns:
  * 		- `NULL`
  */
-__global__ void step_1_kernel(float* data, float* centroids, int* points_per_class, float* centroids_table, int* class_map, int* changes_return) {
+__global__ void step_1_kernel(float* data, float* centroids, int* points_per_class, float* aux_centroids, int* class_map, int* changes_return) {
 	// Compute thread index
 	int thread_index = (blockIdx.y * gridDim.x * blockDim.x * blockDim.y) + (blockIdx.x * blockDim.x * blockDim.y) +
 							(threadIdx.y * blockDim.x) +
@@ -307,7 +307,7 @@ __global__ void step_1_kernel(float* data, float* centroids, int* points_per_cla
 
 		for (int dim = 0; dim < gpu_d; dim++) {
 			int index = point_index * gpu_d + dim;
-			atomicAdd(&centroids_table[index], data[data_index + dim]);
+			atomicAdd(&aux_centroids[index], data[data_index + dim]);
 		}
 	}
 }
