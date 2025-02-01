@@ -11,7 +11,7 @@
 # Compilers
 CC=gcc
 OMPFLAG=-fopenmp -ffp-contract=off -fno-associative-math -mfma -fno-fast-math -ffloat-store
-CUDAFLAGS=--generate-line-info
+CUDAFLAGS=--generate-line-info -arch=sm_75
 MPICC=mpicc
 CUDACC=nvcc
 PTHREADS=-lpthread
@@ -44,6 +44,9 @@ all: $(OBJS)
 
 KMEANS_seq: KMEANS.c
 	$(CC) $(FLAGS) $(DEBUG) $< $(LIBS) -o $@.out
+
+KMEANS_seq_correctness: KMEANS.c
+	$(CC) $(FLAGS) -mavx2 -mfma $(DEBUG) $< $(LIBS) -o $@.out
 
 KMEANS_omp: KMEANS_omp.c
 	$(CC) $(FLAGS) $(DEBUG) $(OMPFLAG) $< $(LIBS) -o $@.out

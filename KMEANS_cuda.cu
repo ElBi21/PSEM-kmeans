@@ -302,8 +302,8 @@ __global__ void step_1_kernel(float* data, float* centroids, int* points_per_cla
 
 		atomicAdd(&(points_per_class[point_index]), 1);
 
-		if (thread_index == 0)
-			printf("  PPC: %d\n", points_per_class[thread_index]);
+		//if (thread_index == 0)
+		//	printf("  PPC: %d\n", points_per_class[thread_index]);
 
 		for (int dim = 0; dim < gpu_d; dim++) {
 			int index = point_index * gpu_d + dim;
@@ -384,8 +384,7 @@ int main(int argc, char* argv[])
 	int n = 0, d = 0;  
 	
 	int error = readInput(argv[1], &n, &d);
-	if(error != 0)
-	{
+	if(error != 0) {
 		showFileError(error,argv[1]);
 		exit(error);
 	}
@@ -395,9 +394,9 @@ int main(int argc, char* argv[])
 		fprintf(stderr,"Memory allocation error.\n");
 		exit(-4);
 	}
+	
 	error = readInput2(argv[1], data);
-	if(error != 0)
-	{
+	if(error != 0) {
 		showFileError(error,argv[1]);
 		exit(error);
 	}

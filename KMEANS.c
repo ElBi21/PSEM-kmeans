@@ -172,7 +172,8 @@ float euclideanDistance(float *point, float *center, int samples)
 	float dist=0.0;
 	for(int i=0; i<samples; i++) 
 	{
-		dist+= (point[i]-center[i])*(point[i]-center[i]);
+		// dist+= (point[i]-center[i])*(point[i]-center[i]);
+		dist = fmaf(point[i]-center[i], point[i]-center[i], dist);
 	}
 	return(dist);
 }
