@@ -261,7 +261,7 @@ __global__ void step_1_kernel(float* data, float* centroids, int* points_per_cla
 		
 		// For each centroid...
 		for (int centroid = 0; centroid < gpu_K; centroid++) {
-			float distance;
+			float distance = 0.0f;
 
 			// Compute the euclidean distance
 			euclideanDistance(&data[data_index], &centroids[centroid * gpu_d], gpu_d, &distance);

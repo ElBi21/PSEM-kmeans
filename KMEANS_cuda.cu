@@ -284,6 +284,9 @@ __global__ void step_1_kernel(float* data, float* centroids, int* points_per_cla
 		int class_assignment = class_map[thread_index];
 		int point_index = class_assignment - 1;
 
+		if (thread_index < gpu_K)
+			printf("PPC POST: %d\n", points_per_class[thread_index]);
+
 		atomicAdd(&(points_per_class[point_index]), 1);
 
 		for (int dim = 0; dim < gpu_d; dim++) {
