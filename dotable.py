@@ -12,14 +12,14 @@ input_files = [
     "input100D.inp",
     "input100D2.inp"
 ]
-process_counts = [2, 3, 4, 8, 12]
+process_counts = [5, 7, 8, 9, 10, 11, 12]
 
 # Regular expression to extract computation time for Rank 0
 time_pattern = r"Computation: ([0-9]+\.[0-9]+) seconds"
 
 # Function to execute the command and collect computation times
 def run_experiment(input_file, num_processes):
-    command = f"./KMEANS_omp.out test_files/{input_file} 40 5000 1 0.0001 output_files/out_{input_file}_omp.txt {num_processes}"
+    command = f"mpirun --oversubscribe -n {num_processes} ./KMEANS_mpi.out test_files/{input_file} 40 5000 1 0.0001 output_files/out_{input_file}_mpi.txt"
     computation_times = []
 
     for process in range(50):
@@ -31,7 +31,7 @@ def run_experiment(input_file, num_processes):
             match = re.search(time_pattern, result.stdout)
             if match:
                 computation_times.append(float(match.group(1)))
-            print(f"Finished process {process} with {num_processes} threads and input file {input_file}")
+            print(f"Finished process {process} with {num_processes} processes and input file {input_file}")
         except Exception as e:
             print(f"Error for {input_file} with {num_processes} processes: {e}")
     
