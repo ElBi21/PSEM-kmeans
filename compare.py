@@ -43,7 +43,7 @@ def compare_files(file1, file2):
         return -1, -1, -1, -1
 
 # Example usage:
-file1 = "output_clusters_cuda.txt"
+file1 = "output_clusters_mpi_pthreads.txt"
 file2 = "output_clusters_seq.txt"
 
 result = compare_files(file1, file2)

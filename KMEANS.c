@@ -297,7 +297,7 @@ int main(int argc, char* argv[])
 	//START CLOCK***************************************
 	start = clock();
 	//**************************************************
-	char *outputMsg = (char *)calloc(10000,sizeof(char));
+	char *outputMsg = (char *)calloc(200000,sizeof(char));
 	char line[100];
 
 	int j;
@@ -383,7 +383,7 @@ int main(int argc, char* argv[])
 		sprintf(line,"\n[%d] Cluster changes: %d\tMax. centroid distance: %f", it, changes, maxDist);
 		outputMsg = strcat(outputMsg,line);
 
-	} while((changes>minChanges) && (it<maxIterations) && (maxDist>(maxThreshold*maxThreshold)));
+	} while((changes>minChanges) && (it<maxIterations) && (maxDist>pow(maxThreshold, 2)));
 
 /*
  *

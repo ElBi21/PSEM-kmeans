@@ -14,9 +14,10 @@ OMPFLAG=-fopenmp -ffp-contract=off -fno-associative-math -mfma -fno-fast-math -f
 CUDAFLAGS=--generate-line-info
 MPICC=mpicc
 CUDACC=nvcc
+PTHREADS=-lpthread
 
 # Flags for optimization and libs
-FLAGS = -O3 -Wall -g -fno-omit-frame-pointer
+FLAGS = -O3 -Wall -g -fno-omit-frame-pointer -mfma
 LIBS=-lm
 
 # Targets to build
@@ -53,7 +54,7 @@ KMEANS_mpi: KMEANS_mpi.c
 KMEANS_cuda: KMEANS_cuda.cu
 	$(CUDACC) $(CUDAFLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
-KMEANS_cuda_f1: KMEANS_cuda_final1.cu
+KMEANS_cuda_t: KMEANS_cuda_t.cu
 	$(CUDACC) $(CUDAFLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
 KMEANS_omp_mpi: KMEANS_omp_mpi.c
@@ -61,6 +62,9 @@ KMEANS_omp_mpi: KMEANS_omp_mpi.c
 
 KMEANS_cuda_mpi: KMEANS_cuda_mpi.cu
 	$(CUDACC) $(CUDAFLAGS) -lmpi $(DEBUG) $< $(LIBS) -o $@.out
+
+KMEANS_mpi_pthreads: KMEANS_mpi_pthreads.c
+	$(MPICC) $(FLAGS) $(DEBUG) $(PTHREADS) $< $(LIBS) -o $@.out
 
 # Remove the target files
 clean:

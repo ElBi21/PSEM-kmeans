@@ -271,7 +271,8 @@ __global__ void step_1_kernel(float* data, float* centroids, int* points_per_cla
 							(threadIdx.y * blockDim.x) +
 							threadIdx.x;
 
-	extern __shared__ float shared_centroids[];	// K x D x sizeof(float)
+	/*extern __shared__ float shared_centroids[];	// K x D x sizeof(float)
+	//__shared__ int ppc[gpu_K];
 
 	// Define block size and local thread index (index within block)
 	int block_size = blockDim.x * blockDim.y;
@@ -281,7 +282,7 @@ __global__ void step_1_kernel(float* data, float* centroids, int* points_per_cla
 	for (int portion = 0; portion < (gpu_K * gpu_d) / block_size; portion++) {
 		int copy_index = local_thread_index + portion * block_size;
 		shared_centroids[copy_index] = centroids[copy_index];
-	}
+	}*/
 
 	if (thread_index < (gpu_n / gpu_size)) {
 		if (thread_index < gpu_K)
@@ -317,10 +318,14 @@ __global__ void step_1_kernel(float* data, float* centroids, int* points_per_cla
 		int point_index = class_assignment - 1;
 
 		if (thread_index < gpu_K)
-			printf("PPC POST: %d\n", points_per_class[thread_index]);
+			printf("PPC POST: %d, class: %d\n", *(points_per_class + point_index), class_assignment);
 
 		// Atomically increase the number of points for the given class
 		atomicAdd(&(points_per_class[point_index]), 1);
+		//atomicAdd(ppc + point_index, 1);
+
+		if (thread_index < gpu_K)
+			printf("PPC ATOMIC: %d, class: %d\n", points_per_class[point_index], class_assignment);
 
 		for (int dim = 0; dim < gpu_d; dim++) {
 			int index = point_index * gpu_d + dim;
@@ -629,7 +634,7 @@ int main(int argc, char* argv[]) {
 		CHECK_CUDA_CALL(cudaDeviceSynchronize());
 
 		// First step of the algorithm, point based
-		step_1_kernel<<<dyn_grid_pts, gen_block, local_centroids_size>>>(gpu_local_points, gpu_centroids, gpu_pointsPerClass, gpu_auxCentroids, gpu_local_classMap, gpu_local_changes);
+		step_1_kernel<<<dyn_grid_pts, gen_block, centroids_size>>>(gpu_local_points, gpu_centroids, gpu_pointsPerClass, gpu_auxCentroids, gpu_local_classMap, gpu_local_changes);
 		CHECK_CUDA_LAST();
 
 		int local_changes = 0;

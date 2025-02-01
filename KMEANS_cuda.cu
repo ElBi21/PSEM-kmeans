@@ -188,7 +188,7 @@ __device__ void euclideanDistance(float *point, float *center, int samples, floa
 	for (int i = 0; i < samples; i++) {
 		dist += (point[i] - center[i]) * (point[i] - center[i]);
 	}
-	*return_addr = sqrt(dist);
+	*return_addr = dist;
 }
 
 /*
@@ -224,6 +224,22 @@ __constant__ int gpu_K;
 __constant__ int gpu_n;
 __constant__ int gpu_d;
 
+
+/*	Implementation of a custom atomicMax operation for floats. Freely taken from
+ *	https://stackoverflow.com/questions/17399119. Credits to vinograd47
+ *  (User link: https://stackoverflow.com/users/2451683/vinograd47)
+ */
+__device__ float custom_atomic_max(float* value_address, float val) {
+    int* address_as_i = (int*) value_address;
+    int old = *address_as_i, assumed;
+    do {
+        assumed = old;
+        old = atomicCAS(address_as_i, assumed, __float_as_int(fmaxf(val, __int_as_float(assumed))));
+    } while (assumed != old);
+    return __int_as_float(old);
+}
+
+
 /*  To each thread, a point with D dimensions gets assigned. The thread must compute the l_2 norm and
  *  take the minimum.
  *
@@ -242,17 +258,17 @@ __global__ void step_1_kernel(float* data, float* centroids, int* points_per_cla
 							(threadIdx.y * blockDim.x) +
 							threadIdx.x;
 
-	extern __shared__ float shared_centroids[];	// K x D x sizeof(float)
+	//extern __shared__ float shared_centroids[];	// K x D x sizeof(float)
 
 	// Define block size and local thread index (index within block)
-	int block_size = blockDim.x * blockDim.y;
-	int local_thread_index = threadIdx.x + threadIdx.y * blockDim.x;
+	//int block_size = blockDim.x * blockDim.y;
+	//int local_thread_index = threadIdx.x + threadIdx.y * blockDim.x;
 
 	// Copy centroids data into shared memory
-	for (int portion = 0; portion < (gpu_K * gpu_d) / block_size; portion++) {
-		int copy_index = local_thread_index + portion * block_size;
-		shared_centroids[copy_index] = centroids[copy_index];
-	}
+	//for (int portion = 0; portion < (gpu_K * gpu_d) / block_size; portion++) {
+	//	int copy_index = local_thread_index + portion * block_size;
+	//	shared_centroids[copy_index] = centroids[copy_index];
+	//}
 
 	if (thread_index < gpu_n) {
 		int data_index = thread_index * gpu_d;
@@ -261,7 +277,7 @@ __global__ void step_1_kernel(float* data, float* centroids, int* points_per_cla
 		
 		// For each centroid...
 		for (int centroid = 0; centroid < gpu_K; centroid++) {
-			float distance;
+			float distance = 0.0f;
 
 			// Compute the euclidean distance
 			euclideanDistance(&data[data_index], &centroids[centroid * gpu_d], gpu_d, &distance);
@@ -284,10 +300,10 @@ __global__ void step_1_kernel(float* data, float* centroids, int* points_per_cla
 		int class_assignment = class_map[thread_index];
 		int point_index = class_assignment - 1;
 
-		if (thread_index < gpu_K)
-			printf("PPC POST: %d\n", points_per_class[thread_index]);
-
 		atomicAdd(&(points_per_class[point_index]), 1);
+
+		if (thread_index == 0)
+			printf("  PPC: %d\n", points_per_class[thread_index]);
 
 		for (int dim = 0; dim < gpu_d; dim++) {
 			int index = point_index * gpu_d + dim;
@@ -325,12 +341,10 @@ __global__ void step_2_kernel(float* centroids_table, float* centroids, int* poi
 		}
 
 		// Perform sqrt of distance
-		distance = sqrt(distance);
+		//distance = sqrt(distance);
 
-		if (distance > *max_distance) {
-			// Exchange atomically, disregard old value
-			atomicExch(max_distance, distance);
-		}
+		// Exchange atomically, disregard old value
+		custom_atomic_max(max_distance, distance);
 	}
 }
 
@@ -339,14 +353,8 @@ int main(int argc, char* argv[])
 {
 
 	//START CLOCK***************************************
-	#ifdef _OPEN_MP
-		double start, end;
-		start = omp_get_wtime();
-	#else
-		clock_t start, end;
-		start = clock();
-	#endif
-
+	clock_t start, end;
+	start = clock();
 	//**************************************************
 	/*
 	* PARAMETERS
@@ -373,16 +381,16 @@ int main(int argc, char* argv[])
 
 	// Reading the input data
 	// lines = number of points; samples = number of dimensions per point
-	int lines = 0, samples= 0;  
+	int n = 0, d = 0;  
 	
-	int error = readInput(argv[1], &lines, &samples);
+	int error = readInput(argv[1], &n, &d);
 	if(error != 0)
 	{
 		showFileError(error,argv[1]);
 		exit(error);
 	}
 	
-	float *data = (float*) calloc(lines * samples, sizeof(float));
+	float *data = (float*) calloc(n * d, sizeof(float));
 	if (data == NULL) {
 		fprintf(stderr,"Memory allocation error.\n");
 		exit(-4);
@@ -396,15 +404,15 @@ int main(int argc, char* argv[])
 
 	// Parameters
 	int K = atoi(argv[2]); 
-	int maxIterations = atoi(argv[3]);
-	int minChanges = (int) (lines * atof(argv[4]) / 100.0);
-	float maxThreshold = atof(argv[5]);
+	int max_iterations = atoi(argv[3]);
+	int min_changes = (int) (n * atof(argv[4]) / 100.0);
+	int max_threshold = pow(atof(argv[5]), 2);
 
-	int *centroidPos = (int*) calloc(K, sizeof(int));
-	float *centroids = (float*) calloc(K * samples, sizeof(float));
-	int *classMap = (int*) calloc(lines, sizeof(int));
+	int* centroid_pos = (int*) calloc(K, sizeof(int));
+	float* centroids = (float*) calloc(K * d, sizeof(float));
+	int* class_map = (int*) calloc(n, sizeof(int));
 
-    if (centroidPos == NULL || centroids == NULL || classMap == NULL)
+    if (centroid_pos == NULL || centroids == NULL || class_map == NULL)
 	{
 		fprintf(stderr, "Memory allocation error.\n");
 		exit(-4);
@@ -414,26 +422,26 @@ int main(int argc, char* argv[])
 	srand(0);
 	int i;
 	for(i = 0; i < K; i++) 
-		centroidPos[i] = rand() % lines;
+		centroid_pos[i] = rand() % n;
 	
 	// Loading the array of initial centroids with the data from the array data
 	// The centroids are points stored in the data array.
-	initCentroids(data, centroids, centroidPos, samples, K);
+	initCentroids(data, centroids, centroid_pos, d, K);
 
 
 	printf("\n    Input properties:");
-	printf("\n\tData file: %s \n\tPoints: %d\n\tDimensions: %d\n", argv[1], lines, samples);
+	printf("\n\tData file: %s \n\tPoints: %d\n\tDimensions: %d\n", argv[1], n, d);
 	printf("\tNumber of clusters: %d\n", K);
-	printf("\tMaximum number of iterations: %d\n", maxIterations);
-	printf("\tMinimum number of changes: %d [%g%% of %d points]\n", minChanges, atof(argv[4]), lines);
-	printf("\tMaximum centroid precision: %f\n", maxThreshold);
+	printf("\tMaximum number of iterations: %d\n", max_iterations);
+	printf("\tMinimum number of changes: %d [%g%% of %d points]\n", min_changes, atof(argv[4]), n);
+	printf("\tMaximum centroid precision: %f\n", max_threshold);
 
 
 	// Check CUDA device properties
 	cudaDeviceProp cuda_prop;
 
 	// Adapt to the number of points
-	int pts_grid_size = lines / (32 * 32) + 1;
+	int pts_grid_size = n / (32 * 32) + 1;
 	int K_grid_size = K / (32 * 32) + 1;
 
 	CHECK_CUDA_CALL(cudaGetDeviceProperties(&cuda_prop, 0));
@@ -454,47 +462,33 @@ int main(int argc, char* argv[])
 
 	
 	//END CLOCK*****************************************
-	#ifdef _OPEN_MP
-		end = omp_get_wtime();
-	#else
-		end = clock();
-	#endif
-	printf("\nMemory allocation: %f seconds\n", end - start);
+	end = clock();
+	printf("\nMemory allocation: %f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
 	fflush(stdout);
 
 	CHECK_CUDA_CALL( cudaSetDevice(0) );
 	CHECK_CUDA_CALL( cudaDeviceSynchronize() );
 	//**************************************************
 	//START CLOCK***************************************
-	#ifdef _OPEN_MP
-		start = omp_get_wtime();
-	#else
-		start = clock();
-	#endif
+	start = clock();
 	//**************************************************
-	char *outputMsg = (char *)calloc(100000,sizeof(char));
+	char *output_msg = (char*) calloc(100000, sizeof(char));
 	char line[100];
 
 	int it = 0;
 	int changes = 0;
-	float maxDist = FLT_MIN;
+	float max_dist = FLT_MIN;
 
 	//pointPerClass: number of points classified in each class
 	//auxCentroids: mean of the points in each class
-	int *pointsPerClass = (int *) malloc(K * sizeof(int));
-	float *auxCentroids = (float*) malloc(K * samples * sizeof(float));
-	float *distCentroids = (float*) malloc(K * sizeof(float)); 
-	if (pointsPerClass == NULL || auxCentroids == NULL || distCentroids == NULL)
-	{
+	int* points_per_class = (int*) malloc(K * sizeof(int));
+	float* aux_centroids = (float*) malloc(K * d * sizeof(float));
+	float* dist_centroids = (float*) malloc(K * sizeof(float)); 
+	if (points_per_class == NULL || aux_centroids == NULL || dist_centroids == NULL) {
 		fprintf(stderr,"Memory allocation error.\n");
 		exit(-4);
 	}
 
-/*
- *
- * START HERE: DO NOT CHANGE THE CODE ABOVE THIS POINT
- *
- */
 
 	// Set carveout to be of maximum size available
 	int carveout = cudaSharedmemCarveoutMaxShared;
@@ -505,14 +499,14 @@ int main(int argc, char* argv[])
 	dim3 dyn_grid_pts(pts_grid_size);
 	dim3 dyn_grid_cent(K_grid_size);
 
-	int data_size = lines * samples * sizeof(float);
-	int centroids_size = K * samples * sizeof(float);
+	int data_size = n * d * sizeof(float);
+	int centroids_size = K * d * sizeof(float);
 
 	// GPU pointers
 	float* gpu_data;
 	float* gpu_centroids;
 	int* gpu_class_map;
-	float* gpu_centroids_temp;
+	float* gpu_aux_centroids;
 	int* gpu_points_per_class;
 
 	// Loop-iteration needed vars
@@ -526,11 +520,11 @@ int main(int argc, char* argv[])
 	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_data, data_size));
 	CHECK_CUDA_CALL(cudaMemcpy(gpu_data, data, data_size, cudaMemcpyHostToDevice));
 	
-	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_class_map, lines * sizeof(int)));
-	CHECK_CUDA_CALL(cudaMemset(gpu_class_map, 0, lines * sizeof(int)));
+	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_class_map, n * sizeof(int)));
+	CHECK_CUDA_CALL(cudaMemset(gpu_class_map, 0, n * sizeof(int)));
 	
-	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_centroids_temp, centroids_size));
-	CHECK_CUDA_CALL(cudaMemset(gpu_centroids_temp, 0, centroids_size));
+	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_aux_centroids, centroids_size));
+	CHECK_CUDA_CALL(cudaMemset(gpu_aux_centroids, 0, centroids_size));
 
 	CHECK_CUDA_CALL(cudaMalloc((void**) &gpu_points_per_class, K * sizeof(int)));
 	CHECK_CUDA_CALL(cudaMemset(gpu_points_per_class, 0, K * sizeof(int)));
@@ -541,8 +535,17 @@ int main(int argc, char* argv[])
 
 	// Initialize constant vars
 	CHECK_CUDA_CALL(cudaMemcpyToSymbol(gpu_K, &K, sizeof(int)));
-	CHECK_CUDA_CALL(cudaMemcpyToSymbol(gpu_n, &lines, sizeof(int)));
-	CHECK_CUDA_CALL(cudaMemcpyToSymbol(gpu_d, &samples, sizeof(int)));
+	CHECK_CUDA_CALL(cudaMemcpyToSymbol(gpu_n, &n, sizeof(int)));
+	CHECK_CUDA_CALL(cudaMemcpyToSymbol(gpu_d, &d, sizeof(int)));
+
+	//END CLOCK*****************************************
+	end = clock();
+	printf("\nCUDA initialization: %f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
+	fflush(stdout);
+	//**************************************************
+	//START CLOCK***************************************
+	start = clock();
+	//**************************************************
 
 	do {
 		it++;
@@ -550,7 +553,7 @@ int main(int argc, char* argv[])
 		// Reset changes, max distance, table of centroids and points per class
 		CHECK_CUDA_CALL(cudaMemset(gpu_changes, 0, sizeof(int)));
 		CHECK_CUDA_CALL(cudaMemset(gpu_max_distance, FLT_MIN, sizeof(float)));
-		CHECK_CUDA_CALL(cudaMemset(gpu_centroids_temp, 0, K * samples * sizeof(int)));
+		CHECK_CUDA_CALL(cudaMemset(gpu_aux_centroids, 0, K * d * sizeof(int)));
 		CHECK_CUDA_CALL(cudaMemset(gpu_points_per_class, 0, K * sizeof(int)));
 		
 		// Ensure memory is actually ready for being used
@@ -560,7 +563,7 @@ int main(int argc, char* argv[])
 
 		// Assign each point to the nearest centroid.
 		step_1_kernel<<<dyn_grid_pts, gen_block, centroids_size>>>(gpu_data, gpu_centroids, gpu_points_per_class,
-			gpu_centroids_temp, gpu_class_map, gpu_changes);
+			gpu_aux_centroids, gpu_class_map, gpu_changes);
 		CHECK_CUDA_LAST();
 
 		// Write down to host the changes for checking convergence condition after waiting for GPU
@@ -568,25 +571,21 @@ int main(int argc, char* argv[])
 		CHECK_CUDA_CALL(cudaMemcpy(&changes, gpu_changes, sizeof(int), cudaMemcpyDeviceToHost));
 
 		// 2. Recalculates the centroids: calculates the mean within each cluster
-		
-		// Perform the first update step, on the points
-		//update_step_points<<<dyn_grid_pts, gen_block>>>(gpu_data, gpu_class_map, gpu_centroids_temp, gpu_points_per_class);
-		//CHECK_CUDA_CALL(cudaDeviceSynchronize());
-
+        
 		// Perform the second update step, on the centroids
-		step_2_kernel<<<dyn_grid_cent, gen_block>>>(gpu_centroids_temp, gpu_centroids, gpu_points_per_class, gpu_max_distance);
+		step_2_kernel<<<dyn_grid_cent, gen_block>>>(gpu_aux_centroids, gpu_centroids, gpu_points_per_class, gpu_max_distance);
 		CHECK_CUDA_LAST();
 
 		// Update effectively the positions and take maxDist
-		CHECK_CUDA_CALL(cudaMemcpy(&maxDist, gpu_max_distance, sizeof(float), cudaMemcpyDeviceToHost));
-		CHECK_CUDA_CALL(cudaMemcpy(gpu_centroids, gpu_centroids_temp, centroids_size, cudaMemcpyDeviceToDevice));
+		CHECK_CUDA_CALL(cudaMemcpy(&max_dist, gpu_max_distance, sizeof(float), cudaMemcpyDeviceToHost));
+		CHECK_CUDA_CALL(cudaMemcpy(gpu_centroids, gpu_aux_centroids, centroids_size, cudaMemcpyDeviceToDevice));
 		
 		CHECK_CUDA_CALL(cudaDeviceSynchronize());
 
-		sprintf(line,"\n[%d] Cluster changes: %d\tMax. centroid distance: %f", it, changes, maxDist);
-		outputMsg = strcat(outputMsg, line);
+		sprintf(line,"\n[%d] Cluster changes: %d\tMax. centroid distance: %f", it, changes, max_dist);
+		output_msg = strcat(output_msg, line);
 
-	} while((changes > minChanges) && (it < maxIterations) && (maxDist > maxThreshold));
+	} while((changes > min_changes) && (it < max_iterations) && (max_dist > max_threshold));
 
 
 /*
@@ -595,44 +594,36 @@ int main(int argc, char* argv[])
  *
  */
 	// Output and termination conditions
-	printf("%s", outputMsg);	
+	printf("%s", output_msg);	
 
 	CHECK_CUDA_CALL( cudaDeviceSynchronize() );
 
 	//END CLOCK*****************************************
-	#ifdef _OPEN_MP
-		end = omp_get_wtime();
-	#else
-		end = clock();
-	#endif
-	printf("\nComputation: %f seconds", end - start);
+	end = clock();
+	printf("\nComputation: %f seconds", (double)(end - start) / CLOCKS_PER_SEC);
 	fflush(stdout);
 	//**************************************************
 	//START CLOCK***************************************
-	#ifdef _OPEN_MP
-		start = omp_get_wtime();
-	#else
-		start = clock();
-	#endif
+	start = clock();
 	//**************************************************
 
 	
 
-	if (changes <= minChanges) {
-		printf("\n\nTermination condition:\nMinimum number of changes reached: %d [%d]", changes, minChanges);
+	if (changes <= min_changes) {
+		printf("\n\nTermination condition:\nMinimum number of changes reached: %d [%d]", changes, min_changes);
 	}
-	else if (it >= maxIterations) {
-		printf("\n\nTermination condition:\nMaximum number of iterations reached: %d [%d]", it, maxIterations);
+	else if (it >= max_iterations) {
+		printf("\n\nTermination condition:\nMaximum number of iterations reached: %d [%d]", it, max_iterations);
 	}
 	else {
-		printf("\n\nTermination condition:\nCentroid update precision reached: %g [%g]", maxDist, maxThreshold);
+		printf("\n\nTermination condition:\nCentroid update precision reached: %g [%g]", max_dist, max_threshold);
 	}	
 
 	// Writing the classification of each point to the output file.
-	CHECK_CUDA_CALL(cudaMemcpy(classMap, gpu_class_map, lines * sizeof(int), cudaMemcpyDeviceToHost));
+	CHECK_CUDA_CALL(cudaMemcpy(class_map, gpu_class_map, n * sizeof(int), cudaMemcpyDeviceToHost));
 	CHECK_CUDA_CALL(cudaDeviceSynchronize());
 
-	error = writeResult(classMap, lines, argv[6]);
+	error = writeResult(class_map, n, argv[6]);
 	if(error != 0)
 	{
 		showFileError(error, argv[6]);
@@ -641,28 +632,24 @@ int main(int argc, char* argv[])
 
 	//Free memory
 	free(data);
-	free(classMap);
-	free(centroidPos);
+	free(class_map);
+	free(centroid_pos);
 	free(centroids);
-	free(distCentroids);
-	free(pointsPerClass);
-	free(auxCentroids);
+	free(dist_centroids);
+	free(points_per_class);
+	free(aux_centroids);
 
 	cudaFree(gpu_data);
 	cudaFree(gpu_centroids);
-	cudaFree(gpu_centroids_temp);
+	cudaFree(gpu_aux_centroids);
 	cudaFree(gpu_changes);
 	cudaFree(gpu_class_map);
 	cudaFree(gpu_max_distance);
 	cudaFree(gpu_points_per_class);
 
 	//END CLOCK*****************************************
-	#ifdef _OPEN_MP
-		end = omp_get_wtime();
-	#else
-		end = clock();
-	#endif
-	printf("\n\nMemory deallocation: %f seconds\n", end - start);
+	end = clock();
+	printf("\n\nMemory deallocation: %f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
 	fflush(stdout);
 	//***************************************************/
 	return 0;

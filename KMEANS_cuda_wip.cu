@@ -261,7 +261,7 @@ __global__ void step_1_kernel(float* data, float* centroids, int* points_per_cla
 		
 		// For each centroid...
 		for (int centroid = 0; centroid < gpu_K; centroid++) {
-			float distance = 0.0f;
+			float distance;
 
 			// Compute the euclidean distance
 			euclideanDistance(&data[data_index], &centroids[centroid * gpu_d], gpu_d, &distance);
@@ -283,6 +283,9 @@ __global__ void step_1_kernel(float* data, float* centroids, int* points_per_cla
 
 		int class_assignment = class_map[thread_index];
 		int point_index = class_assignment - 1;
+
+		if (thread_index < gpu_K)
+			printf("PPC POST: %d\n", points_per_class[thread_index]);
 
 		atomicAdd(&(points_per_class[point_index]), 1);
 
@@ -565,7 +568,11 @@ int main(int argc, char* argv[])
 		CHECK_CUDA_CALL(cudaMemcpy(&changes, gpu_changes, sizeof(int), cudaMemcpyDeviceToHost));
 
 		// 2. Recalculates the centroids: calculates the mean within each cluster
-        
+		
+		// Perform the first update step, on the points
+		//update_step_points<<<dyn_grid_pts, gen_block>>>(gpu_data, gpu_class_map, gpu_centroids_temp, gpu_points_per_class);
+		//CHECK_CUDA_CALL(cudaDeviceSynchronize());
+
 		// Perform the second update step, on the centroids
 		step_2_kernel<<<dyn_grid_cent, gen_block>>>(gpu_centroids_temp, gpu_centroids, gpu_points_per_class, gpu_max_distance);
 		CHECK_CUDA_LAST();
