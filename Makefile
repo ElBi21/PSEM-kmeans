@@ -11,12 +11,13 @@
 # Compilers
 CC=gcc
 OMPFLAG=-fopenmp -ffp-contract=off -fno-associative-math -mfma -fno-fast-math -ffloat-store
-CUDAFLAGS=--generate-line-info
+CUDAFLAGS=--generate-line-info -arch=sm_75
 MPICC=mpicc
 CUDACC=nvcc
+PTHREADS=-lpthread
 
 # Flags for optimization and libs
-FLAGS = -O3 -Wall -g -fno-omit-frame-pointer
+FLAGS = -O3 -Wall -g -fno-omit-frame-pointer -mfma
 LIBS=-lm
 
 # Targets to build
@@ -30,7 +31,7 @@ help:
 	@echo "Group Trasgo, Universidad de Valladolid (Spain)"
 	@echo
 	@echo "make KMEANS_seq	Build only the sequential version"
-	@echo "make cKMEANS_omp	Build only the OpenMP version"
+	@echo "make KMEANS_omp	Build only the OpenMP version"
 	@echo "make KMEANS_mpi	Build only the MPI version"
 	@echo "make KMEANS_cuda	Build only the CUDA version"
 	@echo
@@ -44,6 +45,9 @@ all: $(OBJS)
 KMEANS_seq: KMEANS.c
 	$(CC) $(FLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
+KMEANS_seq_correctness: KMEANS.c
+	$(CC) $(FLAGS) -mavx2 -mfma $(DEBUG) $< $(LIBS) -o $@.out
+
 KMEANS_omp: KMEANS_omp.c
 	$(CC) $(FLAGS) $(DEBUG) $(OMPFLAG) $< $(LIBS) -o $@.out
 
@@ -53,7 +57,7 @@ KMEANS_mpi: KMEANS_mpi.c
 KMEANS_cuda: KMEANS_cuda.cu
 	$(CUDACC) $(CUDAFLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
-KMEANS_cuda_f1: KMEANS_cuda_final1.cu
+KMEANS_cuda_t: KMEANS_cuda_t.cu
 	$(CUDACC) $(CUDAFLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
 KMEANS_omp_mpi: KMEANS_omp_mpi.c
@@ -61,6 +65,9 @@ KMEANS_omp_mpi: KMEANS_omp_mpi.c
 
 KMEANS_cuda_mpi: KMEANS_cuda_mpi.cu
 	$(CUDACC) $(CUDAFLAGS) -lmpi $(DEBUG) $< $(LIBS) -o $@.out
+
+KMEANS_mpi_pthreads: KMEANS_mpi_pthreads.c
+	$(MPICC) $(FLAGS) $(DEBUG) $(PTHREADS) $< $(LIBS) -o $@.out
 
 # Remove the target files
 clean:
