@@ -325,6 +325,19 @@ int main(int argc, char* argv[])
  *
  */
 
+	/*
+	
+	TODO List:
+		define structs for data for threads
+		prepare thread functions
+	
+	
+	
+	
+	*/
+
+
+
 	do{
 		it++;
 	

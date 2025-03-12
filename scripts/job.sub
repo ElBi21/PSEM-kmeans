@@ -1,0 +1,8 @@
+universe = vanilla
+
+# Specify any environment setup if needed
+getenv = True
+
+requirements = (Machine != "node126.di.rm1")
+
+queue
