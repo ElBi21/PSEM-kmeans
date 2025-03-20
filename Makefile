@@ -17,11 +17,11 @@ CUDACC=nvcc
 PTHREADS=-lpthread
 
 # Flags for optimization and libs
-FLAGS = -O3 -Wall -g -fno-omit-frame-pointer -mfma
+FLAGS=-O3 -Wall -g# -fno-omit-frame-pointer -mfma
 LIBS=-lm
 
 # Targets to build
-OBJS=KMEANS_seq.out KMEANS_omp.out KMEANS_mpi.out KMEANS_cuda.out KMEANS_cuda_f1.out
+OBJS=KMEANS_seq.out KMEANS_omp.out KMEANS_mpi.out KMEANS_cuda.out KMEANS_cuda_f1.out KMEANS_pt.out
 
 # Rules. By default show help
 help:
@@ -47,6 +47,9 @@ KMEANS_seq: KMEANS.c
 
 KMEANS_seq_correctness: KMEANS.c
 	$(CC) $(FLAGS) -mavx2 -mfma $(DEBUG) $< $(LIBS) -o $@.out
+
+KMEANS_pt: KMEANS_pt.c
+	$(CC) $(FLAGS) $(DEBUG) $(PTHREADS) $(LIBS) $< -o $@.out
 
 KMEANS_omp: KMEANS_omp.c
 	$(CC) $(FLAGS) $(DEBUG) $(OMPFLAG) $< $(LIBS) -o $@.out
