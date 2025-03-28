@@ -193,20 +193,32 @@ void zeroIntArray(int *array, int size) {
 		array[i] = 0;	
 }
 
-
+/* Struct for the thread arguments*/
 struct thread_args {
+	// Pointers to data
+	float* data;
+	float* centroids;
+	float* class_map;
+
 	// Useful params
 	long ts_rank;
 	long ts_count;
+	
+	// Struct with all the global parameters
+	struct global_params* params;
+};
 
+/* Struct for storing global parameters. To be considered as constants */
+struct global_params {
+	int* min_changes_ptr;
+	int* max_iterations_ptr;
+	float* max_threashold_ptr;
+	int* total_changes_ptr;
+	
 	// Problem data params
 	int n;
 	int d;
 	int k;
-
-	// Pointers to data
-	float* data;
-	float* centroids;
 };
 
 
@@ -217,21 +229,35 @@ void* kernel(void* args) {
 	long t_rank = kernel_args -> ts_rank;
 	long t_count = kernel_args -> ts_count;
 
-	int dimensions = kernel_args -> d;
-	int k = kernel_args -> k;
-	int t_local_n = (kernel_args -> n) / t_count;
+	int dimensions = kernel_args -> params -> d;
+	int k = kernel_args -> params -> k;
+	int local_n = (kernel_args -> params -> n) / t_count;
 	float* centroids = kernel_args -> centroids;
 
-	int t_data_offset = t_rank * t_local_n * dimensions;
+	int t_data_offset = t_rank * local_n * dimensions;
 	float* t_data = (kernel_args -> data) + (t_data_offset);
 
 	// Vars
 	float min_dist = FLT_MAX;
+	float max_dist = FLT_MIN;
+	int iteration = 0;
+	int changes = 0;
 
-	// Test for checkinjg arrays
+	// Test for checking arrays
 	printf("Rank %ld, starting index: %d, data: %f\n", t_rank, t_data_offset, t_data[dimensions]);
 
-	for (int i = 0; i < t_local_n; i++) {
+	/*do {
+		iteration++;
+		printf("[T%ld] Iteration %d\n", t_rank, iteration);
+	} while (
+		(iteration < *(kernel_args -> params -> max_iterations_ptr)) && \
+		(changes < *(kernel_args -> params -> min_changes_ptr)) && \
+		(*(kernel_args -> params -> max_threashold_ptr) > max_dist)
+	);*/
+
+
+	// Segfault to fix in this part of code. Will fix later
+	/*for (int i = 0; i < local_n; i++) {
 		for (int c = 0; c < k; c++) {
 			float dist = euclideanDistance(t_data + i * dimensions, centroids + c * dimensions, dimensions);
 			if (t_rank == 0)
@@ -242,9 +268,9 @@ void* kernel(void* args) {
 				min_dist = dist;
 			}
 		}
-	}
+	}*/
 
-	printf("The min dist from thread %ld is %f\n", t_rank, min_dist);
+	// printf("The min dist from thread %ld is %f\n", t_rank, min_dist);
 	
 	return NULL;
 }
@@ -370,30 +396,44 @@ int main(int argc, char* argv[]) {
  */
 
 	long thread_counts = 8;
+	int total_changes = 0;
 
 	pthread_t* thread_handles;
 	thread_handles = malloc(4 * sizeof(pthread_t));
 
-	for (long t = 0; t < thread_counts; t++) {
-		struct thread_args* thread_data = malloc(sizeof(struct thread_args));
-		thread_data -> ts_rank = t;
-		thread_data -> ts_count = thread_counts;
-
-		thread_data -> n = lines;
-		thread_data -> d = samples;
-		thread_data -> k = K;
+	// Define global parameters
+	struct global_params g_params = {
+		.d = samples,
+		.n = lines,
+		.k = K,
 		
-		thread_data -> data = data;
-		thread_data -> centroids = centroids;
+		.max_threashold_ptr = &maxThreshold,
+		.max_iterations_ptr = &maxIterations,
+		.min_changes_ptr = &minChanges,
+		.total_changes_ptr = &total_changes
+	};
 
-		pthread_create(&thread_handles[t], NULL, kernel, (void*) thread_data);
+	for (long t = 0; t < thread_counts; t++) {
+		struct thread_args thread_data = {
+			.data = data,
+			.centroids = centroids,
+			.ts_rank = t,
+			.ts_count = thread_counts,
+			.params = &g_params
+		};
+
+		pthread_create(&thread_handles[t], NULL, kernel, (void*) &thread_data);
 	}
-
+	
+	
 	for (long t = 0; t < thread_counts; t++) {
 		pthread_join(thread_handles[t], NULL);
+		printf("Hello %ld\n", t);
 	}
+	
 
 	free(thread_handles);
+
 
 /*
  *
