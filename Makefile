@@ -10,7 +10,7 @@
 
 # Compilers
 CC=gcc
-OMPFLAG=-fopenmp -ffp-contract=off -fno-associative-math -mfma -fno-fast-math -ffloat-store
+OMPFLAG=-fopenmp# -ffp-contract=off -fno-associative-math -mfma -fno-fast-math -ffloat-store
 CUDAFLAGS=--generate-line-info -arch=sm_75
 MPICC=mpicc
 CUDACC=nvcc

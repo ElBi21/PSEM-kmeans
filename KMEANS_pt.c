@@ -195,87 +195,120 @@ void zeroIntArray(int *array, int size) {
 
 /* Struct for the thread arguments*/
 struct thread_args {
-	// Pointers to data
-	float* data;
-	float* centroids;
-	float* class_map;
-
 	// Useful params
-	long ts_rank;
-	long ts_count;
+	long tsf_rank;
+	long tsf_count;
 	
 	// Struct with all the global parameters
-	struct global_params* params;
+	struct global_params* global_params_struct;
 };
 
 /* Struct for storing global parameters. To be considered as constants */
 struct global_params {
+	// Pointers to data
+	float* data;
+	float* centroids;
+	int* class_map;
+
+	// Parameters pointers
 	int* min_changes_ptr;
 	int* max_iterations_ptr;
 	float* max_threashold_ptr;
 	int* total_changes_ptr;
+
+	// Return pointers
+	int* changes_return_ptr;
+	int* iterations_return_ptr;
+	float* max_dist_return_ptr;
+
+	char* line_ptr;
+	char* output_message_ptr;
 	
 	// Problem data params
 	int n;
 	int d;
 	int k;
+
+	// Pthreads data
+	pthread_mutex_t* return_sync_mutex;
 };
 
 
 void* kernel(void* args) {
 	struct thread_args* kernel_args = (struct thread_args*) args;
+	struct global_params* global_params = kernel_args -> global_params_struct;
 
 	// Dump some data from the struct
-	long t_rank = kernel_args -> ts_rank;
-	long t_count = kernel_args -> ts_count;
+	long thread_rank = kernel_args -> tsf_rank;
+	long thread_count = kernel_args -> tsf_count;
+	// printf("Moving test from thread %ld! :D\n", thread_rank);
+	
+	int dimensions = global_params -> d;
+	int k = global_params -> k;
+	int local_n = (global_params -> n) / thread_count;
+	float* centroids = global_params -> centroids;
+	int* class_map = global_params -> class_map;
 
-	int dimensions = kernel_args -> params -> d;
-	int k = kernel_args -> params -> k;
-	int local_n = (kernel_args -> params -> n) / t_count;
-	float* centroids = kernel_args -> centroids;
-
-	int t_data_offset = t_rank * local_n * dimensions;
-	float* t_data = (kernel_args -> data) + (t_data_offset);
+	int local_data_offset = thread_rank * local_n * dimensions;
+	float* local_data = (global_params -> data) + (local_data_offset);
 
 	// Vars
-	float min_dist = FLT_MAX;
-	float max_dist = FLT_MIN;
 	int iteration = 0;
-	int changes = 0;
+	float min_dist, max_dist;
+
+	// TEMP
+	max_dist = FLT_MIN;
+
+	int local_changes, assigned_class;
 
 	// Test for checking arrays
-	printf("Rank %ld, starting index: %d, data: %f\n", t_rank, t_data_offset, t_data[dimensions]);
+	printf("Rank %ld, starting index: %d (local_n: %d), data: %f\n", thread_rank, local_data_offset, local_n, local_data[dimensions]);
 
-	/*do {
+
+	do {
 		iteration++;
-		printf("[T%ld] Iteration %d\n", t_rank, iteration);
-	} while (
-		(iteration < *(kernel_args -> params -> max_iterations_ptr)) && \
-		(changes < *(kernel_args -> params -> min_changes_ptr)) && \
-		(*(kernel_args -> params -> max_threashold_ptr) > max_dist)
-	);*/
+		local_changes = 0;
+		
+		for (int pt = 0; pt < local_n; pt++) {
+			assigned_class = 1;
+			min_dist = FLT_MAX;
+			for (int centr = 0; centr < k; centr++) {
+				float dist = euclideanDistance(local_data + (pt * dimensions + local_n), centroids + (centr * dimensions), dimensions);
 
-
-	// Segfault to fix in this part of code. Will fix later
-	/*for (int i = 0; i < local_n; i++) {
-		for (int c = 0; c < k; c++) {
-			float dist = euclideanDistance(t_data + i * dimensions, centroids + c * dimensions, dimensions);
-			if (t_rank == 0)
-				printf("Centroid: %f, dist: %f\n", *(centroids + c * dimensions), dist);
-			if (dist < min_dist) {
-				if (t_rank == 0)
-					printf("We got a winner! (Thread %ld)\n  %f vs %f\n", t_rank, dist, min_dist);
-				min_dist = dist;
+				if (dist < min_dist) {
+					min_dist = dist;
+					assigned_class = centr + 1;
+				}
+			}
+			
+			if (class_map[pt] != assigned_class) {
+				local_changes++;
+				class_map[pt] = assigned_class;
 			}
 		}
-	}*/
 
-	// printf("The min dist from thread %ld is %f\n", t_rank, min_dist);
-	
+		printf("[T%ld] Iteration %d, changes: %d\n", thread_rank, iteration, local_changes);
+
+		// Critical zone: update return parameters
+		pthread_mutex_lock(global_params -> return_sync_mutex);
+		*(global_params -> changes_return_ptr) += local_changes;
+		*(global_params -> iterations_return_ptr) = iteration;
+		*(global_params -> max_dist_return_ptr) = MAX(max_dist, *(global_params -> max_dist_return_ptr));
+		pthread_mutex_unlock(global_params -> return_sync_mutex);
+
+		// Print message
+		if (thread_rank == 0) {
+			sprintf(global_params -> line_ptr, "\n[%d] Cluster changes: %d\tMax. centroid distance: %f", iteration, local_changes, max_dist);
+			global_params -> output_message_ptr = strcat(global_params -> output_message_ptr, global_params -> line_ptr);
+		}
+	} while (
+		(iteration < *(global_params -> max_iterations_ptr)) && \
+		(local_changes < *(global_params -> min_changes_ptr)) && \
+		(*(global_params -> max_threashold_ptr) > max_dist)
+	);
+
 	return NULL;
 }
-
-
 
 
 int main(int argc, char* argv[]) {
@@ -369,15 +402,8 @@ int main(int argc, char* argv[]) {
 	//START CLOCK***************************************
 	start = clock();
 	//**************************************************
-	char *outputMsg = (char *)calloc(10000,sizeof(char));
-	char line[100];
-
-	int j;
-	int class;
-	float dist, minDist;
-	int it = 0;
-	int changes = 0;
-	float maxDist;
+	char *outputMsg = (char*) calloc(10000, sizeof(char));
+	char line[1000];
 
 	//pointPerClass: number of points classified in each class
 	//auxCentroids: mean of the points in each class
@@ -395,14 +421,25 @@ int main(int argc, char* argv[]) {
  *
  */
 
-	long thread_counts = 8;
+	long thread_counts = 4;
 	int total_changes = 0;
 
-	pthread_t* thread_handles;
-	thread_handles = malloc(4 * sizeof(pthread_t));
+	int it, changes;
+	float maxDist;
 
+	pthread_t* thread_handles;
+	pthread_mutex_t return_sync_mutex;
+
+	thread_handles = malloc(thread_counts * sizeof(pthread_t));
+	pthread_mutex_init(&return_sync_mutex, NULL);
+	
+	printf("CIAOOOOO\n");
 	// Define global parameters
 	struct global_params g_params = {
+		.data = data,
+		.centroids = centroids,
+		.class_map = classMap,
+
 		.d = samples,
 		.n = lines,
 		.k = K,
@@ -410,38 +447,42 @@ int main(int argc, char* argv[]) {
 		.max_threashold_ptr = &maxThreshold,
 		.max_iterations_ptr = &maxIterations,
 		.min_changes_ptr = &minChanges,
-		.total_changes_ptr = &total_changes
+		.total_changes_ptr = &total_changes,
+
+		.changes_return_ptr = &changes,
+		.iterations_return_ptr = &it,
+		.max_dist_return_ptr = &maxDist,
+
+		.output_message_ptr = outputMsg,
+		.line_ptr = line,
+
+		.return_sync_mutex = &return_sync_mutex
 	};
 
 	for (long t = 0; t < thread_counts; t++) {
-		struct thread_args thread_data = {
-			.data = data,
-			.centroids = centroids,
-			.ts_rank = t,
-			.ts_count = thread_counts,
-			.params = &g_params
-		};
+		struct thread_args* thread_data = malloc(sizeof(struct thread_args));
+		thread_data -> tsf_rank = t;
+		thread_data -> tsf_count = thread_counts;
+		thread_data -> global_params_struct = &g_params;
 
-		pthread_create(&thread_handles[t], NULL, kernel, (void*) &thread_data);
+		pthread_create(&thread_handles[t], NULL, kernel, (void*) thread_data);
 	}
-	
 	
 	for (long t = 0; t < thread_counts; t++) {
 		pthread_join(thread_handles[t], NULL);
-		printf("Hello %ld\n", t);
 	}
-	
 
-	free(thread_handles);
-
-
+	// Recover parameters
+	/*changes = *(g_params.changes_return_ptr);
+	it = *(g_params.iterations_return_ptr);
+	maxDist = *(g_params.max_dist_return_ptr);*/
 /*
  *
  * STOP HERE: DO NOT CHANGE THE CODE BELOW THIS POINT
  *
  */
 	// Output and termination conditions
-	printf("%s",outputMsg);	
+	printf("%s", outputMsg);	
 
 	//END CLOCK*****************************************
 	end = clock();
@@ -451,8 +492,6 @@ int main(int argc, char* argv[]) {
 	//START CLOCK***************************************
 	start = clock();
 	//**************************************************
-
-	
 
 	if (changes <= minChanges) {
 		printf("\n\nTermination condition:\nMinimum number of changes reached: %d [%d]", changes, minChanges);
@@ -478,6 +517,8 @@ int main(int argc, char* argv[]) {
 	free(pointsPerClass);
 	free(auxCentroids);
 
+	free(thread_handles);
+
 	//END CLOCK*****************************************
 	end = clock();
 	printf("\n\nMemory deallocation: %f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
@@ -485,3 +526,27 @@ int main(int argc, char* argv[]) {
 	//***************************************************/
 	return 0;
 }
+
+/* 
+
+struct global_params* g_params = malloc(sizeof(struct global_params));
+	g_params -> data = data;
+	g_params -> centroids = centroids;
+
+	g_params -> d = samples;
+	g_params -> n = lines;
+	g_params -> k = K;
+		
+	g_params -> max_threashold_ptr = &maxThreshold;
+	g_params -> max_iterations_ptr = &maxIterations;
+	g_params -> min_changes_ptr = &minChanges;
+	g_params -> total_changes_ptr = &total_changes;
+
+	g_params -> changes_return_ptr = &changes;
+	g_params -> iterations_return_ptr = &it;
+	g_params -> max_dist_return_ptr = &maxDist;
+
+	g_params -> output_message_ptr = outputMsg;
+	g_params -> line_ptr = line;
+
+*/
