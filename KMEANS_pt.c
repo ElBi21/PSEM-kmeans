@@ -14,6 +14,9 @@
  * This work is licensed under a Creative Commons Attribution-ShareAlike 4.0 International License.
  * https://creativecommons.org/licenses/by-sa/4.0/
  */
+#define _XOPEN_SOURCE 600
+
+// #include <bits/pthreadtypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
@@ -145,7 +148,6 @@ int writeResult(int *classMap, int lines, const char* filename) {
 }
 
 /*
-
 Function initCentroids: This function copies the values of the initial centroids, using their 
 position in the input data structure as a reference map.
 */
@@ -209,12 +211,12 @@ struct global_params {
 	float* data;
 	float* centroids;
 	int* class_map;
+	int* points_per_class;
 
 	// Parameters pointers
 	int* min_changes_ptr;
 	int* max_iterations_ptr;
 	float* max_threashold_ptr;
-	int* total_changes_ptr;
 
 	// Return pointers
 	int* changes_return_ptr;
@@ -231,6 +233,7 @@ struct global_params {
 
 	// Pthreads data
 	pthread_mutex_t* return_sync_mutex;
+	pthread_barrier_t* return_sync_barrier;
 };
 
 
@@ -248,9 +251,12 @@ void* kernel(void* args) {
 	int local_n = (global_params -> n) / thread_count;
 	float* centroids = global_params -> centroids;
 	int* class_map = global_params -> class_map;
+	int* points_per_class = global_params -> points_per_class;
 
 	int local_data_offset = thread_rank * local_n * dimensions;
 	float* local_data = (global_params -> data) + (local_data_offset);
+
+	int* global_changes = global_params -> changes_return_ptr;
 
 	// Vars
 	int iteration = 0;
@@ -262,7 +268,7 @@ void* kernel(void* args) {
 	int local_changes, assigned_class;
 
 	// Test for checking arrays
-	printf("Rank %ld, starting index: %d (local_n: %d), data: %f\n", thread_rank, local_data_offset, local_n, local_data[dimensions]);
+	printf("Rank %ld, starting index: %d (local_n: %d), data: %f, global changes: %d\n", thread_rank, local_data_offset, local_n, local_data[dimensions], *global_changes);
 
 
 	do {
@@ -287,6 +293,8 @@ void* kernel(void* args) {
 			}
 		}
 
+		zeroIntArray(points_per_class, k);
+
 		printf("[T%ld] Iteration %d, changes: %d\n", thread_rank, iteration, local_changes);
 
 		// Critical zone: update return parameters
@@ -296,9 +304,11 @@ void* kernel(void* args) {
 		*(global_params -> max_dist_return_ptr) = MAX(max_dist, *(global_params -> max_dist_return_ptr));
 		pthread_mutex_unlock(global_params -> return_sync_mutex);
 
+		pthread_barrier_wait(global_params -> return_sync_barrier);
+
 		// Print message
 		if (thread_rank == 0) {
-			sprintf(global_params -> line_ptr, "\n[%d] Cluster changes: %d\tMax. centroid distance: %f", iteration, local_changes, max_dist);
+			sprintf(global_params -> line_ptr, "\n[%d] Cluster changes: %d\tMax. centroid distance: %f", iteration, *(global_params -> changes_return_ptr), max_dist);
 			global_params -> output_message_ptr = strcat(global_params -> output_message_ptr, global_params -> line_ptr);
 		}
 	} while (
@@ -422,16 +432,19 @@ int main(int argc, char* argv[]) {
  */
 
 	long thread_counts = 4;
-	int total_changes = 0;
 
 	int it, changes;
 	float maxDist;
 
+	changes = 0;
+
 	pthread_t* thread_handles;
 	pthread_mutex_t return_sync_mutex;
+	pthread_barrier_t return_sync_barrier;
 
 	thread_handles = malloc(thread_counts * sizeof(pthread_t));
 	pthread_mutex_init(&return_sync_mutex, NULL);
+	pthread_barrier_init(&return_sync_barrier, NULL, (unsigned int) thread_counts);
 	
 	printf("CIAOOOOO\n");
 	// Define global parameters
@@ -439,6 +452,7 @@ int main(int argc, char* argv[]) {
 		.data = data,
 		.centroids = centroids,
 		.class_map = classMap,
+		.points_per_class = pointsPerClass,
 
 		.d = samples,
 		.n = lines,
@@ -447,7 +461,6 @@ int main(int argc, char* argv[]) {
 		.max_threashold_ptr = &maxThreshold,
 		.max_iterations_ptr = &maxIterations,
 		.min_changes_ptr = &minChanges,
-		.total_changes_ptr = &total_changes,
 
 		.changes_return_ptr = &changes,
 		.iterations_return_ptr = &it,
@@ -456,7 +469,8 @@ int main(int argc, char* argv[]) {
 		.output_message_ptr = outputMsg,
 		.line_ptr = line,
 
-		.return_sync_mutex = &return_sync_mutex
+		.return_sync_mutex = &return_sync_mutex,
+		.return_sync_barrier = &return_sync_barrier
 	};
 
 	for (long t = 0; t < thread_counts; t++) {
@@ -518,6 +532,9 @@ int main(int argc, char* argv[]) {
 	free(auxCentroids);
 
 	free(thread_handles);
+
+	pthread_mutex_destroy(&return_sync_mutex);
+	pthread_barrier_destroy(&return_sync_barrier);
 
 	//END CLOCK*****************************************
 	end = clock();
