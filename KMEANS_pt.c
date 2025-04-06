@@ -178,21 +178,36 @@ float euclideanDistance(float *point, float *center, int samples) {
 Function zeroFloatMatriz: Set matrix elements to 0
 This function could be modified
 */
-void zeroFloatMatriz(float *matrix, int rows, int columns) {
-	int i,j;
-	for (i=0; i<rows; i++)
-		for (j=0; j<columns; j++)
-			matrix[i*columns+j] = 0.0;	
+void zeroFloatMatriz(float *matrix, int total_size, int t_rank, int t_count) {
+	int local_size = floor((float) total_size / t_count);
+	int i;
+	for (i = 0; i < local_size; i++)
+		matrix[local_size * t_rank + i] = 0.0;
+
+	// In case of non-integer local sizes, make rank 0 fill in
+	if ((total_size % t_count) != 0 && t_rank == 0) {
+		for (i = local_size * t_count; i < local_size; i++) {
+			matrix[i] = 0.0;
+		}
+	}
 }
 
 /*
 Function zeroIntArray: Set array elements to 0
 This function could be modified
 */
-void zeroIntArray(int *array, int size) {
+void zeroIntArray(int *array, int total_size, int t_rank, int t_count) {
+	int local_size = floor((float) total_size / t_count);
 	int i;
-	for (i=0; i<size; i++)
-		array[i] = 0;	
+	for (i = 0; i < local_size; i++)
+		array[local_size * t_rank + i] = 0;
+
+	// In case of non-integer local sizes, make rank 0 fill in
+	if ((total_size % t_count) != 0 && t_rank == 0) {
+		for (i = local_size * t_count; i < local_size; i++) {
+			array[i] = 0;
+		}
+	}
 }
 
 /* Struct for the thread arguments*/
@@ -212,6 +227,7 @@ struct global_params {
 	float* centroids;
 	int* class_map;
 	int* points_per_class;
+	float* aux_centroids;
 
 	// Parameters pointers
 	int* min_changes_ptr;
@@ -234,6 +250,7 @@ struct global_params {
 	// Pthreads data
 	pthread_mutex_t* return_sync_mutex;
 	pthread_barrier_t* return_sync_barrier;
+	pthread_barrier_t* step_1_barrier;
 };
 
 
@@ -244,42 +261,48 @@ void* kernel(void* args) {
 	// Dump some data from the struct
 	long thread_rank = kernel_args -> tsf_rank;
 	long thread_count = kernel_args -> tsf_count;
-	// printf("Moving test from thread %ld! :D\n", thread_rank);
+	// 
 	
-	int dimensions = global_params -> d;
+	int dims = global_params -> d;
 	int k = global_params -> k;
-	int local_n = (global_params -> n) / thread_count;
+	int n = global_params -> n;
+	int local_n = floor((float) n / thread_count);
+	int local_k = floor((float) k / thread_count);
 	float* centroids = global_params -> centroids;
+	float* data = global_params -> data;
+
 	int* class_map = global_params -> class_map;
 	int* points_per_class = global_params -> points_per_class;
+	float* aux_centroids = global_params -> aux_centroids;
 
-	int local_data_offset = thread_rank * local_n * dimensions;
-	float* local_data = (global_params -> data) + (local_data_offset);
-
-	int* global_changes = global_params -> changes_return_ptr;
-
+	int local_data_offset = thread_rank * local_n * dims;
+	float* local_data = data + local_data_offset;
+	int local_centroids_offset = thread_rank * local_k * dims;
+	float* local_centroids = centroids + local_centroids_offset;
+	
 	// Vars
 	int iteration = 0;
 	float min_dist, max_dist;
-
-	// TEMP
-	max_dist = FLT_MIN;
+	int* global_changes = global_params -> changes_return_ptr;
 
 	int local_changes, assigned_class;
 
 	// Test for checking arrays
-	printf("Rank %ld, starting index: %d (local_n: %d), data: %f, global changes: %d\n", thread_rank, local_data_offset, local_n, local_data[dimensions], *global_changes);
+	printf("Rank %ld, starting index: %d (local_n: %d), data: %f, global changes: %d\n", thread_rank, local_data_offset, local_n, local_data[dims], *global_changes);
 
 
 	do {
 		iteration++;
 		local_changes = 0;
+
+		zeroIntArray(points_per_class, k, thread_rank, thread_count);
+		zeroFloatMatriz(centroids, k * dims, thread_rank, thread_count);
 		
 		for (int pt = 0; pt < local_n; pt++) {
 			assigned_class = 1;
 			min_dist = FLT_MAX;
 			for (int centr = 0; centr < k; centr++) {
-				float dist = euclideanDistance(local_data + (pt * dimensions + local_n), centroids + (centr * dimensions), dimensions);
+				float dist = euclideanDistance(local_data + (pt * dims + local_n), centroids + (centr * dims), dims);
 
 				if (dist < min_dist) {
 					min_dist = dist;
@@ -293,9 +316,42 @@ void* kernel(void* args) {
 			}
 		}
 
-		zeroIntArray(points_per_class, k);
+		
+		// Wait for all threads to compute all centroids
+		pthread_barrier_wait(global_params -> step_1_barrier);
+		// ERROR WITH BARRIER
+		printf("Moving test from thread %ld! :D\n", thread_rank);
 
-		printf("[T%ld] Iteration %d, changes: %d\n", thread_rank, iteration, local_changes);
+		for (int pt = 0; pt < n; pt++) {
+			int class = class_map[pt];
+
+			// If the class is in the range allowed by the thread, then the thread updates the centroid position
+			if ((local_k * thread_rank < class) && (class < local_k * (thread_rank + 1))) {
+				points_per_class[class - 1] += 1;
+				for (int dimension = 0; dimension < dims; dimension++) {
+					aux_centroids[(class - 1) * dims + dimension] += data[pt * dims + dimension];
+				}
+			} 
+			// Otherwise, if there are some classes that go outside of the range, make the last thread fill them
+			else if ((class > (local_k * thread_count)) && (thread_rank == thread_count - 1)) {
+				points_per_class[class - 1] += 1;
+				for (int dimension = 0; dimension < dims; dimension++) {
+					aux_centroids[(class - 1) * dims + dimension] += data[pt * dims + dimension];
+				}
+			}
+		}
+
+
+		for (int c = 0; c < local_k; c++) {
+			for (int dimension = 0; dimension < dims; dimension++) {
+				aux_centroids[thread_rank * local_k + c * dims + dimension] /= points_per_class[c];
+			}
+		}
+
+		max_dist = FLT_MIN;
+
+
+		// printf("[T%ld] Iteration %d, changes: %d\n", thread_rank, iteration, local_changes);
 
 		// Critical zone: update return parameters
 		pthread_mutex_lock(global_params -> return_sync_mutex);
@@ -441,18 +497,19 @@ int main(int argc, char* argv[]) {
 	pthread_t* thread_handles;
 	pthread_mutex_t return_sync_mutex;
 	pthread_barrier_t return_sync_barrier;
+	pthread_barrier_t step_1_barrier;
 
 	thread_handles = malloc(thread_counts * sizeof(pthread_t));
 	pthread_mutex_init(&return_sync_mutex, NULL);
 	pthread_barrier_init(&return_sync_barrier, NULL, (unsigned int) thread_counts);
-	
-	printf("CIAOOOOO\n");
+
 	// Define global parameters
 	struct global_params g_params = {
 		.data = data,
 		.centroids = centroids,
 		.class_map = classMap,
 		.points_per_class = pointsPerClass,
+		.aux_centroids = auxCentroids,
 
 		.d = samples,
 		.n = lines,
@@ -470,7 +527,8 @@ int main(int argc, char* argv[]) {
 		.line_ptr = line,
 
 		.return_sync_mutex = &return_sync_mutex,
-		.return_sync_barrier = &return_sync_barrier
+		.return_sync_barrier = &return_sync_barrier,
+		.step_1_barrier = &step_1_barrier
 	};
 
 	for (long t = 0; t < thread_counts; t++) {
