@@ -277,12 +277,13 @@ void* kernel(void* args) {
 	int* global_points_per_class = global_params -> points_per_class;
 	float* global_aux_centroids = global_params -> aux_centroids;
 
-	int* local_points_per_class = calloc(k, sizeof(int));
-	float* local_aux_centroids = calloc(k * dims, sizeof(int));
+	int* local_points_per_class = (int*) calloc(k, sizeof(int));
+	float* local_aux_centroids = (float*) calloc(k * dims, sizeof(float));
 
 	// Vars
 	int iteration = 0;
-	float min_dist, max_dist;
+	float local_min_dist = FLT_MAX;
+	float local_max_dist = FLT_MIN;
 	int local_changes, assigned_class;
 
 	// Initialize the arrays
@@ -291,34 +292,37 @@ void* kernel(void* args) {
 	zeroFloatMatriz(global_aux_centroids, k * dims, thread_rank, thread_count);
 	zeroFloatMatriz(local_aux_centroids, k * dims, thread_rank, thread_count);
 
+	int DEBUG = 0;
+
 	do {
 		iteration++;
 		local_changes = 0;
-
-		if (thread_rank == 0) {
-			local_changes -= *(global_params -> changes_return_ptr);
-			// printf("Iteration %d, global changes: %d, local changes: %d\n", iteration, *(global_params -> changes_return_ptr), local_changes);
-		}
 					
 		for (int point_index = 0; point_index < local_n; point_index++) {
 			assigned_class = 1;
-			min_dist = FLT_MAX;
+			local_min_dist = FLT_MAX;
 			for (int centr_index = 0; centr_index < k; centr_index++) {
 				float dist = euclideanDistance(global_data + (local_n * thread_rank) + point_index * dims, global_centroids + (centr_index * dims), dims);
 
-				if (dist < min_dist) {
-					min_dist = dist;
+				if (dist < local_min_dist) {
+					local_min_dist = dist;
 					assigned_class = centr_index + 1;
 				}
 			}
 			
+
 			if (global_class_map[thread_rank * local_n + point_index] != assigned_class) {
 				local_changes++;
 			}
 			
+			// Assign new class
 			global_class_map[thread_rank * local_n + point_index] = assigned_class;
+
+			// Step 2
+			// Add 1 to the local points_per_class
 			local_points_per_class[assigned_class - 1] += 1;
 
+			// Add the coordinates
 			for (int dim_index = 0; dim_index < dims; dim_index++) {
 				local_aux_centroids[(assigned_class - 1) * dims + dim_index] += global_data[(local_n * thread_rank) + point_index * dims + dim_index];
 			}
@@ -326,25 +330,57 @@ void* kernel(void* args) {
 
 		// Sum up all local points per class and auxiliary centroids
 		pthread_mutex_lock(global_params -> step_1_mutex);
+
+		// Reset global max dist and changes
+		if (thread_rank == 0) {
+			*(global_params -> changes_return_ptr) = 0;
+			*(global_params -> max_dist_return_ptr) = FLT_MIN;
+		}
+
+		if (DEBUG == 0) {
+			for (int i = 0; i < dims; i++) {
+				printf("%f ", local_aux_centroids[i]);
+			}
+			DEBUG = 1;
+
+			printf("\n\n\n\n");
+		}
+
+		// Build global_aux_centroids from local parts
 		for (int c = 0; c < k; c++) {
 			global_points_per_class[c] += local_points_per_class[c];
+			
 			for (int i = 0; i < dims; i++) {
 				global_aux_centroids[c * dims + i] += local_aux_centroids[c * dims + i];
 			}
 		}
 		pthread_mutex_unlock(global_params -> step_1_mutex);
+
 		
 		// Wait for all threads to compute all centroids
 		pthread_barrier_wait(global_params -> step_1_barrier);
 
-		// Average all centroids
+		// Average all auxiliary centroids
 		for (int c = 0; c < local_k; c++) {
 			for (int dimension = 0; dimension < dims; dimension++) {
-				global_aux_centroids[thread_rank * local_k + c * dims + dimension] /= global_points_per_class[c];
+				global_aux_centroids[thread_rank * local_k * dims + c * dims + dimension] /= global_points_per_class[thread_rank * local_k + c];
 			}
 		}
 
-		max_dist = FLT_MIN;
+		// TODO: Do previous part for last indexes that are not covered due to the floor
+
+		if (DEBUG == 2 && thread_rank == 0) {
+			//printf("Thread %ld entered the mutex part\n", thread_rank);
+			for (int i = 0; i < dims; i++) {
+				printf("%f ", global_aux_centroids[i]);
+			}
+			//printf("\n%f %f %f %f %f\n", local_aux_centroids[0], local_aux_centroids[1], local_aux_centroids[2], local_aux_centroids[3], local_aux_centroids[4]);
+			DEBUG = 3;
+
+			printf("\n\nGlobal PPC: %d\n\n", global_points_per_class[0]);
+		}
+
+		local_max_dist = FLT_MIN;
 		for (int centroid_index = 0; centroid_index < local_k; centroid_index++) {
 			float dist_centroids = euclideanDistance(
 				global_centroids + (thread_rank * local_k) + centroid_index * dims, 
@@ -352,7 +388,9 @@ void* kernel(void* args) {
 				dims
 			);
 			
-			max_dist = MAX(max_dist, dist_centroids);
+			local_max_dist = MAX(local_max_dist, dist_centroids);
+			//if (thread_rank == 0 && iteration < 5)
+				//printf("[T%ld] [It%d] Max distance so far: %f, Distance: %f (Centr: %f, AuxCentr: %f)\n", thread_rank, iteration, local_max_dist, dist_centroids, *(global_centroids + (thread_rank * local_k) + centroid_index * dims), *(global_aux_centroids + (thread_rank * local_k) + centroid_index * dims));
 		}
 
 		if ((k % local_k != 0) && (thread_rank == thread_count - 1)) {
@@ -363,42 +401,36 @@ void* kernel(void* args) {
 					dims
 				);
 
-				max_dist = MAX(max_dist, dist_centroids);
+				local_max_dist = MAX(local_max_dist, dist_centroids);
 				// printf("Distance obtained: %f\n", dist_centroids);
 			}
 		}
 
-		// printf("[T%ld] Max dist: %f - k mod local_k: %d\n", thread_rank, max_dist, k % local_k);
+		//if (thread_rank == 0 && iteration < 3)
+		//	for (int i = 0; i < local_k; i++)
+		//		printf("[T%ld] [It%d] Centroids: %f <-> Aux centroids: %f\n", thread_rank, iteration, global_aux_centroids[i * dims], global_aux_centroids[i * dims]);
 
 		// Critical zone: update return parameters
 		pthread_mutex_lock(global_params -> return_sync_mutex);
 		*(global_params -> changes_return_ptr) += local_changes;
 		*(global_params -> iterations_return_ptr) = iteration;
-		*(global_params -> max_dist_return_ptr) = MAX(max_dist, *(global_params -> max_dist_return_ptr));
+		*(global_params -> max_dist_return_ptr) = MAX(local_max_dist, *(global_params -> max_dist_return_ptr));
 		pthread_mutex_unlock(global_params -> return_sync_mutex);
 
 		pthread_barrier_wait(global_params -> return_sync_barrier);
 
-		if (thread_rank == 0 && iteration < 5)
-			for (int i = 0; i < k; i++)
-				printf("[It%d] Centroids: %f\n", iteration, global_centroids[i * dims]);
+		/*if (iteration < 3)
+			for (int i = 0; i < local_k; i++)
+				printf("[T%ld] [It%d] Next Centroids: %f\n", thread_rank, iteration, global_centroids[i * dims]);*/
 
-		memcpy(
-			global_centroids + thread_rank * local_k * dims, 
-			global_aux_centroids + thread_rank * local_k * dims, 
-			local_k * dims
-		);
+		memcpy(global_centroids + thread_rank * local_k * dims, global_aux_centroids + thread_rank * local_k * dims, local_k * dims);
 		
 		// Print message
 		if (thread_rank == 0) {
 			sprintf(global_params -> line_ptr, "\n[%d] Cluster changes: %d\tMax. centroid distance: %f", iteration, *(global_params -> changes_return_ptr), *(global_params -> max_dist_return_ptr));
 			global_params -> output_message_ptr = strcat(global_params -> output_message_ptr, global_params -> line_ptr);
-
-			memcpy(
-				global_centroids + thread_count * local_k * dims, 
-				global_aux_centroids + thread_count * local_k * dims, 
-				(k % local_k) * dims
-			);
+			
+			memcpy(global_centroids + thread_count * local_k * dims, global_aux_centroids + thread_count * local_k * dims, (k % local_k) * dims);
 		}
 
 		zeroIntArray(global_points_per_class, k, thread_rank, thread_count);
@@ -532,7 +564,9 @@ int main(int argc, char* argv[]) {
 	int it, changes;
 	float maxDist;
 
+	it = 0;
 	changes = 0;
+	maxDist = FLT_MIN;
 
 	pthread_t* thread_handles;
 	pthread_mutex_t return_sync_mutex;
