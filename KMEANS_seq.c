@@ -172,9 +172,9 @@ float euclideanDistance(float *point, float *center, int samples)
 	float dist=0.0;
 	for(int i=0; i<samples; i++) 
 	{
-		dist+= (point[i]-center[i])*(point[i]-center[i]);
+		// dist+= (point[i]-center[i])*(point[i]-center[i]);
+		dist = fmaf(point[i]-center[i], point[i]-center[i], dist);
 	}
-	dist = sqrt(dist);
 	return(dist);
 }
 
@@ -298,8 +298,8 @@ int main(int argc, char* argv[])
 	//START CLOCK***************************************
 	start = clock();
 	//**************************************************
-	char *outputMsg = (char *)calloc(100000,sizeof(char));
-	char line[1000];
+	char *outputMsg = (char *)calloc(200000,sizeof(char));
+	char line[100];
 
 	int j;
 	int class;
@@ -384,7 +384,7 @@ int main(int argc, char* argv[])
 		sprintf(line,"\n[%d] Cluster changes: %d\tMax. centroid distance: %f", it, changes, maxDist);
 		outputMsg = strcat(outputMsg,line);
 
-	} while((changes>minChanges) && (it<maxIterations) && (maxDist>maxThreshold));
+	} while((changes>minChanges) && (it<maxIterations) && (maxDist>pow(maxThreshold, 2)));
 
 /*
  *
