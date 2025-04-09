@@ -642,7 +642,7 @@ int main(int argc, char* argv[]) {
 
 	//END CLOCK*****************************************
 	end = clock();
-	printf("\nComputation: %f seconds", (double)(end - start) / CLOCKS_PER_SEC);
+	printf("\nComputation: %f seconds", (double)(end - start) / CLOCKS_PER_SEC / threads_count);
 	fflush(stdout);
 	//**************************************************
 	//START CLOCK***************************************
