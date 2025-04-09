@@ -281,31 +281,15 @@ void* kernel(void* args) {
 
 	// Initialize the arrays
 	zeroIntArray(global_points_per_class, k, thread_rank, thread_count);
-	zeroIntArray(local_points_per_class, k, thread_rank, thread_count);
 	zeroFloatMatriz(global_aux_centroids, k * dims, thread_rank, thread_count);
-	zeroFloatMatriz(local_aux_centroids, k * dims, thread_rank, thread_count);
+	memset(local_points_per_class, 0, k * sizeof(int));
+	memset(local_aux_centroids, 0.0, k * dims * sizeof(float));
+
+	printf("Rank %ld, going to do:\n\tData: %ld -> %ld\n\tCentroids: %ld -> %ld\n", thread_rank, thread_rank * local_n, (thread_rank + 1) * local_n, thread_rank * local_k, (thread_rank + 1) * local_k);
 
 	do {
 		iteration++;
 		local_changes = 0;
-
-		if (iteration < 5 && thread_rank == 0) {
-			printf("Local\n");
-
-			for (int i = 0; i < k; i++) {
-				printf("%d ", local_points_per_class[i]);
-			}
-			printf("\nGlobal\n");
-
-			for (int i = 0; i < k; i++) {
-				printf("%d ", global_points_per_class[i]);
-			}
-			printf("\n");
-		}
-
-		if (iteration < 5 && thread_rank == 0)
-			for (int i = 0; i < 50; i++)
-				printf("[It%d] At beginning, Global Centroids[%d]: %f\n", iteration, i, global_centroids[i]);
 		
 		// Step 1
 		// For each local point...
@@ -397,8 +381,8 @@ void* kernel(void* args) {
 
 		if ((k % local_k != 0) && (thread_rank == 0)) {
 			for (int centroid_index = 0; centroid_index < (k % local_k); centroid_index++) {
-				for (int dimension = 0; dimension < dims; dimension++) {
-					global_aux_centroids[(thread_count * local_k * dims) + centroid_index * dims + dimension] /= global_points_per_class[thread_count * local_k + centroid_index];
+				for (int dimension_index = 0; dimension_index < dims; dimension_index++) {
+					global_aux_centroids[(thread_count * local_k * dims) + centroid_index * dims + dimension_index] /= global_points_per_class[thread_count * local_k + centroid_index];
 				}
 
 				float dist_centroids = euclideanDistance(
@@ -433,16 +417,19 @@ void* kernel(void* args) {
 				global_centroids[thread_count * local_k * dims + i] = global_aux_centroids[thread_count * local_k * dims + i];
 			}
 		}
+		
+		
+		/*if (iteration < 5 && thread_rank == 0)
+			for (int i = 0; i < 210; i++)
+				printf("[It%d] Global AuxCentroids[%d]: %f, Global Centroids[%d]: %f\n", iteration, k * dims - 210 + i, global_aux_centroids[k * dims - 210 + i], k * dims - 210 + i, global_centroids[k * dims - 210 + i]);*/
 
-		if (iteration < 5 && thread_rank == 0)
-			for (int i = 0; i < 50; i++)
-				printf("[It%d] Global AuxCentroids[%d]: %f, Global Centroids[%d]: %f\n", iteration, i, global_aux_centroids[i], i, global_centroids[i]);
+		pthread_barrier_wait(global_params -> final_barrier);
 
-		zeroIntArray(global_points_per_class, k, thread_rank, thread_count);
-		zeroFloatMatriz(global_aux_centroids, k * dims, thread_rank, thread_count);
 		memset(local_points_per_class, 0, k * sizeof(int));
 		memset(local_aux_centroids, 0.0, k * dims * sizeof(float));
-		
+		zeroIntArray(global_points_per_class, k, thread_rank, thread_count);
+		zeroFloatMatriz(global_aux_centroids, k * dims, thread_rank, thread_count);
+
 		pthread_barrier_wait(global_params -> final_barrier);
 	} while (
 		(iteration < *(global_params -> max_iterations_ptr)) && \
