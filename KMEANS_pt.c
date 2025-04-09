@@ -397,8 +397,6 @@ void* kernel(void* args) {
 		*(global_params -> iterations_return_ptr) = iteration;
 		*(global_params -> max_dist_return_ptr) = MAX(local_max_dist, *(global_params -> max_dist_return_ptr));
 		pthread_mutex_unlock(global_params -> return_sync_mutex);
-
-		//pthread_barrier_wait(global_params -> return_sync_barrier);
 		
 		// Print message
 		if (thread_rank == 0) {
@@ -408,6 +406,7 @@ void* kernel(void* args) {
 
 		pthread_barrier_wait(global_params -> final_barrier);
 
+		// Reset variables used
 		memset(local_points_per_class, 0, k * sizeof(int));
 		memset(local_aux_centroids, 0.0, k * dims * sizeof(float));
 		zeroIntArray(global_points_per_class, k, thread_rank, thread_count);
@@ -419,6 +418,9 @@ void* kernel(void* args) {
 		(*(global_params -> changes_return_ptr) > *(global_params -> min_changes_ptr)) && \
 		(pow(*(global_params -> max_threshold_ptr), 2) < *(global_params -> max_dist_return_ptr))
 	);
+
+	free(local_points_per_class);
+	free(local_aux_centroids);
 
 	return NULL;
 }
@@ -644,7 +646,9 @@ int main(int argc, char* argv[]) {
 	free(thread_handles);
 
 	pthread_mutex_destroy(&return_sync_mutex);
+	pthread_mutex_destroy(&step_1_mutex);
 	pthread_barrier_destroy(&return_sync_barrier);
+	pthread_barrier_destroy(&step_1_barrier);
 
 	//END CLOCK*****************************************
 	end = clock();
