@@ -285,8 +285,6 @@ void* kernel(void* args) {
 	memset(local_points_per_class, 0, k * sizeof(int));
 	memset(local_aux_centroids, 0.0, k * dims * sizeof(float));
 
-	printf("Rank %ld, going to do:\n\tData: %ld -> %ld\n\tCentroids: %ld -> %ld\n", thread_rank, thread_rank * local_n, (thread_rank + 1) * local_n, thread_rank * local_k, (thread_rank + 1) * local_k);
-
 	do {
 		iteration++;
 		local_changes = 0;
@@ -305,18 +303,12 @@ void* kernel(void* args) {
 					&global_centroids[centr_index * dims], 
 					dims);
 
-				if (thread_rank == 0 && iteration < 5 && point_index < 10 && centr_index < 5)
-					printf("[It%d] The distance from point %d to centroid %d is %f\n", iteration, point_index, centr_index, dist);
-
 				// If the distance is the smallest (locally), update the smallest distance found so far
 				if (dist < local_min_dist) {
 					local_min_dist = dist;
 					assigned_class = centr_index + 1;
 				}
 			}
-
-			if (iteration < 5 && point_index < 30 && thread_rank == 0)
-				printf("[It%d] Class for point %d was %d, replacing in %d\n", iteration, point_index, global_class_map[point_index], assigned_class);
 
 			// If the class assigned is different, add 1 to local_changes
 			if (global_class_map[thread_rank * local_n + point_index] != assigned_class) {
@@ -357,10 +349,6 @@ void* kernel(void* args) {
 		// Wait for all threads to compute all centroids
 		pthread_barrier_wait(global_params -> step_1_barrier);
 
-		if (iteration < 5 && thread_rank == 0)
-			for (int k_ind = 0; k_ind < k; k_ind++)
-				printf("[It%d] PPC for cluster %d is %d\n", iteration, k_ind, global_points_per_class[k_ind]);
-
 		local_max_dist = FLT_MIN;
 		for (int centroid_index = 0; centroid_index < local_k; centroid_index++) {
 			// Average all dimensions
@@ -379,6 +367,10 @@ void* kernel(void* args) {
 			local_max_dist = MAX(local_max_dist, dist_centroids);
 		}
 
+		for (int i = 0; i < local_k * dims; i++) {
+			global_centroids[thread_rank * local_k * dims + i] = global_aux_centroids[thread_rank * local_k * dims + i];
+		}
+
 		if ((k % local_k != 0) && (thread_rank == 0)) {
 			for (int centroid_index = 0; centroid_index < (k % local_k); centroid_index++) {
 				for (int dimension_index = 0; dimension_index < dims; dimension_index++) {
@@ -393,10 +385,10 @@ void* kernel(void* args) {
 
 				local_max_dist = MAX(local_max_dist, dist_centroids);
 			}
-		}
 
-		for (int i = 0; i < local_k * dims; i++) {
-			global_centroids[thread_rank * local_k * dims + i] = global_aux_centroids[thread_rank * local_k * dims + i];
+			for (int i = 0; i < (k % local_k) * dims; i++) {
+				global_centroids[thread_count * local_k * dims + i] = global_aux_centroids[thread_count * local_k * dims + i];
+			}
 		}
 
 		// Critical zone: update return parameters
@@ -406,22 +398,13 @@ void* kernel(void* args) {
 		*(global_params -> max_dist_return_ptr) = MAX(local_max_dist, *(global_params -> max_dist_return_ptr));
 		pthread_mutex_unlock(global_params -> return_sync_mutex);
 
-		pthread_barrier_wait(global_params -> return_sync_barrier);
+		//pthread_barrier_wait(global_params -> return_sync_barrier);
 		
 		// Print message
 		if (thread_rank == 0) {
 			sprintf(global_params -> line_ptr, "\n[%d] Cluster changes: %d\tMax. centroid distance: %f", iteration, *(global_params -> changes_return_ptr), *(global_params -> max_dist_return_ptr));
 			global_params -> output_message_ptr = strcat(global_params -> output_message_ptr, global_params -> line_ptr);
-
-			for (int i = 0; i < (k % local_k) * dims; i++) {
-				global_centroids[thread_count * local_k * dims + i] = global_aux_centroids[thread_count * local_k * dims + i];
-			}
 		}
-		
-		
-		/*if (iteration < 5 && thread_rank == 0)
-			for (int i = 0; i < 210; i++)
-				printf("[It%d] Global AuxCentroids[%d]: %f, Global Centroids[%d]: %f\n", iteration, k * dims - 210 + i, global_aux_centroids[k * dims - 210 + i], k * dims - 210 + i, global_centroids[k * dims - 210 + i]);*/
 
 		pthread_barrier_wait(global_params -> final_barrier);
 
