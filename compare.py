@@ -44,7 +44,7 @@ def compare_files(file1, file2):
 
 # Example usage:
 file1 = "outputs/out_pt_4.txt"
-file2 = "outputs/out_pt_8.txt"
+file2 = "outputs/out_pt_64.txt"
 
 result = compare_files(file1, file2)
 if result[0] == -1:
