@@ -245,6 +245,7 @@ struct global_params {
 	pthread_barrier_t* return_sync_barrier;
 	pthread_barrier_t* step_1_barrier;
 	pthread_barrier_t* final_barrier;
+	long* in_charge;
 };
 
 
@@ -255,6 +256,7 @@ void* kernel(void* args) {
 	// Dump some data from the struct
 	long thread_rank = kernel_args -> tsf_rank;
 	long thread_count = kernel_args -> tsf_count;
+	long* in_charge = global_params -> in_charge;
 	// printf("Moving test from thread %ld! :D\n", thread_rank);
 	
 	int dims = global_params -> d;
@@ -288,6 +290,11 @@ void* kernel(void* args) {
 	do {
 		iteration++;
 		local_changes = 0;
+
+		if (thread_rank == 3) {
+			printf("Iteration %d\n", iteration);
+			fflush(stdout);
+		}
 		
 		// Step 1
 		// For each local point...
@@ -334,6 +341,10 @@ void* kernel(void* args) {
 			if (thread_rank == 0) {
 				*(global_params -> changes_return_ptr) = 0;
 				*(global_params -> max_dist_return_ptr) = FLT_MIN;
+
+				*in_charge = *in_charge + 1;
+				if (*in_charge < thread_count)
+					*in_charge = 0;
 			}
 
 			// Build global_aux_centroids from local parts
@@ -371,7 +382,7 @@ void* kernel(void* args) {
 			global_centroids[thread_rank * local_k * dims + i] = global_aux_centroids[thread_rank * local_k * dims + i];
 		}
 
-		if ((k - local_k * thread_count != 0) && (thread_rank == 0)) {
+		if ((k - local_k * thread_count != 0) && (thread_rank == *in_charge)) {
 			int to_solve = k - local_k * thread_count;
 			for (int centroid_index = 0; centroid_index < (to_solve); centroid_index++) {
 				for (int dimension_index = 0; dimension_index < dims; dimension_index++) {
@@ -549,6 +560,7 @@ int main(int argc, char* argv[]) {
 
 	int it, changes;
 	float maxDist;
+	long in_charge = 0;
 
 	it = 0;
 	changes = 0;
@@ -595,7 +607,8 @@ int main(int argc, char* argv[]) {
 		.return_sync_barrier = &return_sync_barrier,
 		.step_1_mutex = &step_1_mutex,
 		.step_1_barrier = &step_1_barrier,
-		.final_barrier = &final_barrier
+		.final_barrier = &final_barrier,
+		.in_charge = &in_charge
 	};
 
 	//END CLOCK*****************************************
