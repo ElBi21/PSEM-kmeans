@@ -180,15 +180,11 @@ This function could be modified
 */
 void zeroFloatMatriz(float *matrix, int total_size, int t_rank, int t_count) {
 	int local_size = floor((float) total_size / t_count);
-	int i;
-	for (i = 0; i < local_size; i++)
-		matrix[local_size * t_rank + i] = 0.0;
-
+	memset(matrix + local_size * t_rank, 0.0, local_size * sizeof(float));
+	
 	// In case of non-integer local sizes, make rank 0 fill in
 	if ((total_size % t_count) != 0 && t_rank == 0) {
-		for (i = local_size * t_count; i < local_size; i++) {
-			matrix[i] = 0.0;
-		}
+		memset(matrix + local_size * t_count, 0.0, (total_size % local_size) * sizeof(float));
 	}
 }
 
@@ -198,15 +194,11 @@ This function could be modified
 */
 void zeroIntArray(int *array, int total_size, int t_rank, int t_count) {
 	int local_size = floor((float) total_size / t_count);
-	int i;
-	for (i = 0; i < local_size; i++)
-		array[local_size * t_rank + i] = 0;
+	memset(array + t_rank * local_size, 0, local_size * sizeof(int));
 
 	// In case of non-integer local sizes, make rank 0 fill in
 	if ((total_size % t_count) != 0 && t_rank == 0) {
-		for (i = local_size * t_count; i < local_size; i++) {
-			array[i] = 0;
-		}
+		memset(array + t_count * local_size, 0, (total_size % local_size) * sizeof(int));
 	}
 }
 
@@ -296,11 +288,31 @@ void* kernel(void* args) {
 	do {
 		iteration++;
 		local_changes = 0;
+
+		if (iteration < 5 && thread_rank == 0) {
+			printf("Local\n");
+
+			for (int i = 0; i < k; i++) {
+				printf("%d ", local_points_per_class[i]);
+			}
+			printf("\nGlobal\n");
+
+			for (int i = 0; i < k; i++) {
+				printf("%d ", global_points_per_class[i]);
+			}
+			printf("\n");
+		}
+
+		if (iteration < 5 && thread_rank == 0)
+			for (int i = 0; i < 50; i++)
+				printf("[It%d] At beginning, Global Centroids[%d]: %f\n", iteration, i, global_centroids[i]);
 		
-		// For each point...
+		// Step 1
+		// For each local point...
 		for (int point_index = 0; point_index < local_n; point_index++) {
 			assigned_class = 1;
 			local_min_dist = FLT_MAX;
+
 			// For each centroid...
 			for (int centr_index = 0; centr_index < k; centr_index++) {
 				// Compute l_2 squared (without root)
@@ -309,12 +321,18 @@ void* kernel(void* args) {
 					&global_centroids[centr_index * dims], 
 					dims);
 
+				if (thread_rank == 0 && iteration < 5 && point_index < 10 && centr_index < 5)
+					printf("[It%d] The distance from point %d to centroid %d is %f\n", iteration, point_index, centr_index, dist);
+
 				// If the distance is the smallest (locally), update the smallest distance found so far
 				if (dist < local_min_dist) {
 					local_min_dist = dist;
 					assigned_class = centr_index + 1;
 				}
 			}
+
+			if (iteration < 5 && point_index < 30 && thread_rank == 0)
+				printf("[It%d] Class for point %d was %d, replacing in %d\n", iteration, point_index, global_class_map[point_index], assigned_class);
 
 			// If the class assigned is different, add 1 to local_changes
 			if (global_class_map[thread_rank * local_n + point_index] != assigned_class) {
@@ -354,6 +372,10 @@ void* kernel(void* args) {
 		
 		// Wait for all threads to compute all centroids
 		pthread_barrier_wait(global_params -> step_1_barrier);
+
+		if (iteration < 5 && thread_rank == 0)
+			for (int k_ind = 0; k_ind < k; k_ind++)
+				printf("[It%d] PPC for cluster %d is %d\n", iteration, k_ind, global_points_per_class[k_ind]);
 
 		local_max_dist = FLT_MIN;
 		for (int centroid_index = 0; centroid_index < local_k; centroid_index++) {
@@ -412,10 +434,14 @@ void* kernel(void* args) {
 			}
 		}
 
+		if (iteration < 5 && thread_rank == 0)
+			for (int i = 0; i < 50; i++)
+				printf("[It%d] Global AuxCentroids[%d]: %f, Global Centroids[%d]: %f\n", iteration, i, global_aux_centroids[i], i, global_centroids[i]);
+
 		zeroIntArray(global_points_per_class, k, thread_rank, thread_count);
-		zeroIntArray(local_points_per_class, k, thread_rank, thread_count);
 		zeroFloatMatriz(global_aux_centroids, k * dims, thread_rank, thread_count);
-		zeroFloatMatriz(local_aux_centroids, k * dims, thread_rank, thread_count);
+		memset(local_points_per_class, 0, k * sizeof(int));
+		memset(local_aux_centroids, 0.0, k * dims * sizeof(float));
 		
 		pthread_barrier_wait(global_params -> final_barrier);
 	} while (
@@ -513,14 +539,6 @@ int main(int argc, char* argv[]) {
 	printf("\tMaximum centroid precision: %f\n", maxThreshold);
 	printf("\tNumber of threads: %ld\n", threads_count);
 	
-	//END CLOCK*****************************************
-	end = clock();
-	printf("\nMemory allocation: %f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
-	fflush(stdout);
-	//**************************************************
-	//START CLOCK***************************************
-	start = clock();
-	//**************************************************
 	char *outputMsg = (char*) calloc(100000, sizeof(char));
 	char line[1000];
 
@@ -591,6 +609,15 @@ int main(int argc, char* argv[]) {
 		.final_barrier = &final_barrier
 	};
 
+	//END CLOCK*****************************************
+	end = clock();
+	printf("\nMemory allocation: %f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
+	fflush(stdout);
+	//**************************************************
+	//START CLOCK***************************************
+	start = clock();
+	//**************************************************
+
 	for (long t = 0; t < threads_count; t++) {
 		struct thread_args* thread_data = malloc(sizeof(struct thread_args));
 		thread_data -> tsf_rank = t;
@@ -603,11 +630,6 @@ int main(int argc, char* argv[]) {
 	for (long t = 0; t < threads_count; t++) {
 		pthread_join(thread_handles[t], NULL);
 	}
-
-	// Recover parameters
-	/*changes = *(g_params.changes_return_ptr);
-	it = *(g_params.iterations_return_ptr);
-	maxDist = *(g_params.max_dist_return_ptr);*/
 /*
  *
  * STOP HERE: DO NOT CHANGE THE CODE BELOW THIS POINT
@@ -618,7 +640,7 @@ int main(int argc, char* argv[]) {
 
 	//END CLOCK*****************************************
 	end = clock();
-	printf("\nComputation: %f seconds", (double)(end - start) / CLOCKS_PER_SEC);
+	printf("\nComputation: %f seconds", (double)(end - start) / CLOCKS_PER_SEC / threads_count);
 	fflush(stdout);
 	//**************************************************
 	//START CLOCK***************************************

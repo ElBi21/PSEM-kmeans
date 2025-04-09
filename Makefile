@@ -21,7 +21,7 @@ FLAGS=-O3 -Wall -g#-fno-omit-frame-pointer -mfma
 LIBS=-lm
 
 # Targets to build
-OBJS=KMEANS_seq.out KMEANS_omp.out KMEANS_mpi.out KMEANS_cuda.out KMEANS_cuda_f1.out KMEANS_pt.out
+OBJS=KMEANS_seq.out KMEANS_omp.out KMEANS_mpi.out KMEANS_cuda.out KMEANS_cuda_f1.out KMEANS_pt.out KMEANS_omp_mpi.out
 
 # Rules. By default show help
 help:
