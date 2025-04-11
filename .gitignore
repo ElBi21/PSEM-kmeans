@@ -27,3 +27,4 @@ test*
 NSCompute
 .ipynb_checkpoints
 job.job
+pt_*

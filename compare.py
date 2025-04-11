@@ -43,8 +43,8 @@ def compare_files(file1, file2):
         return -1, -1, -1, -1
 
 # Example usage:
-file1 = "outputs/out_pt_4.txt"
-file2 = "outputs/out_pt_64.txt"
+file1 = "out_pt_64k_8t.out"
+file2 = "out_pt_64k_18t.out"
 
 result = compare_files(file1, file2)
 if result[0] == -1:
