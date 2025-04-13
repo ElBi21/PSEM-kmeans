@@ -15,6 +15,7 @@
 /out
 output_*.txt
 out*.txt
+*output.txt
 
 # VSC
 .vscode
@@ -28,3 +29,6 @@ NSCompute
 .ipynb_checkpoints
 job.job
 pt_*
+
+logs/slurm
+slurm_batch.sh

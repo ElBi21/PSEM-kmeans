@@ -17,7 +17,7 @@ CUDACC=nvcc
 PTHREADS=-lpthread
 
 # Flags for optimization and libs
-FLAGS=-O3 -Wall -g#-fno-omit-frame-pointer -mfma
+FLAGS=-O3 -Wall#-fno-omit-frame-pointer -mfma
 LIBS=-lm
 
 # Targets to build
