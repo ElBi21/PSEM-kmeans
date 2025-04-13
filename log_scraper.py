@@ -118,5 +118,5 @@ def check_json(out_file: str):
 if __name__ == "__main__":
     #main_slurm("mpi_omp_scrape_20d_slurm.json", "mpi_omp_input20D.inp")
     #seq_slurm("seq_20d_slurm.json", "seq_input20D.inp")
-    main_slurm("mpi_scrape_20d_slurm.json", "mpi_input20D.inp")
+    main_slurm("mpi_omp_scrape_100d_slurm.json", "mpi_omp_input100d")
     #print(check_json("mpi_scrape_100d4.json"))
