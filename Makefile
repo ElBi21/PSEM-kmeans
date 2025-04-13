@@ -51,6 +51,9 @@ KMEANS_seq_correctness: KMEANS.c
 KMEANS_pt: KMEANS_pt.c
 	$(CC) $(FLAGS) $(DEBUG) $(PTHREADS) $(LIBS) $< -o $@.out
 
+KMEANS_pt_old: KMEANS_pt_old.c
+	$(CC) $(FLAGS) $(DEBUG) $(PTHREADS) $(LIBS) $< -o $@.out
+
 KMEANS_omp: KMEANS_omp.c
 	$(CC) $(FLAGS) $(DEBUG) $(OMPFLAG) $< $(LIBS) -o $@.out
 
