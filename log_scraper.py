@@ -43,7 +43,7 @@ def main_htcondor(out_file: str) -> None:
 def main_slurm(out_file: str, check_for: str) -> None:
     print(f"Starting to scrape...\nWill save in {out_file}")
     root = "logs/slurm"
-    pattern = re.compile(" Computation: .* seconds")
+    pattern = re.compile("Computation: .* seconds")
     files = os.listdir(root)
     results = dict()
     found = 0
@@ -52,7 +52,6 @@ def main_slurm(out_file: str, check_for: str) -> None:
         if file_path.startswith(check_for) and not os.path.isdir(file_path): #and file_path.endswith("_2.txt"):#and file_path.__contains__("_t1_run"):
             path = os.path.join(root, file_path)
             run_params = file_path.split("_")[2:-2]
-            print(run_params)
             run_str = "seq"
 
             if check_for != "seq":
@@ -118,5 +117,6 @@ def check_json(out_file: str):
 if __name__ == "__main__":
     #main_slurm("mpi_omp_scrape_20d_slurm.json", "mpi_omp_input20D.inp")
     #seq_slurm("seq_20d_slurm.json", "seq_input20D.inp")
-    main_slurm("mpi_omp_scrape_100d_slurm.json", "mpi_omp_input100d")
+    #main_slurm("mpi_omp_scrape_100d_slurm.json", "mpi_omp_input100d")
+    main_slurm("pt_20d_slurm.json", "pt_input20D")
     #print(check_json("mpi_scrape_100d4.json"))

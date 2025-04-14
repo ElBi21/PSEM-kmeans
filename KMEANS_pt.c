@@ -357,9 +357,6 @@ void* kernel(void* args) {
 
         local_max_dist = FLT_MIN;
         for (int centroid_index = 0; centroid_index < local_k; centroid_index++) {
-            if (iteration == 1)
-                printf("Rank %ld got in\n", thread_rank);
-
             // Average all dimensions
             for (int dimension_index = 0; dimension_index < dims; dimension_index++) {
                 global_aux_centroids[k_before * dims + centroid_index * dims + dimension_index] /= global_points_per_class[k_before + centroid_index];
