@@ -16,6 +16,7 @@
 output_*.txt
 out*.txt
 *output.txt
+old-res/*
 
 # VSC
 .vscode
