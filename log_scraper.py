@@ -42,7 +42,7 @@ def main_htcondor(out_file: str) -> None:
 
 def main_slurm(out_file: str, check_for: str) -> None:
     print(f"Starting to scrape...\nWill save in {out_file}")
-    root = "logs/slurm"
+    root = "logs/slurm/pt_20d"
     pattern = re.compile("Computation: .* seconds")
     files = os.listdir(root)
     results = dict()

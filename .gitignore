@@ -28,7 +28,7 @@ test*
 NSCompute
 .ipynb_checkpoints
 job.job
-pt_*
+pt_out*
 
 logs/slurm
 slurm_batch.sh
