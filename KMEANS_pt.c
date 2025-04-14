@@ -287,17 +287,9 @@ void* kernel(void* args) {
     memset(local_points_per_class, 0, k * sizeof(int));
     memset(local_aux_centroids, 0.0, k * dims * sizeof(float));
 
-    //if (thread_rank == 0)
-	//    printf("Rank %ld:\n\tLocal n: %d (Remaining: %d)\n\tLocal k: %d (Remaining: %d)\n", thread_rank, local_n, n_to_solve, local_k, k_to_solve);
-
-    printf("Rank %ld:\n\tk to do: %d -> %d (+%d)\n\tn to do: %d -> %d (+%d)\n", thread_rank, k_before, k_before + local_k, local_k, n_before, n_before + local_n, local_n);
-
     do {
         iteration++;
         local_changes = 0;
-
-        if (thread_rank == 0)
-            printf("Iteration %d\n", iteration);
         
         // Step 1
         // For each local point...
@@ -337,6 +329,8 @@ void* kernel(void* args) {
                 local_aux_centroids[(assigned_class - 1) * dims + dim_index] += global_data[(n_before * dims) + point_index * dims + dim_index];
             }
         }
+
+        pthread_barrier_wait(global_params -> return_sync_barrier);
 
         // Sum up all local points per class and auxiliary centroids
         pthread_mutex_lock(global_params -> step_1_mutex);
@@ -388,24 +382,6 @@ void* kernel(void* args) {
 
         pthread_barrier_wait(global_params -> return_sync_barrier);
 
-        /*if (iteration < 40 && thread_rank == 0) {
-            printf("\nIteration %d\n\tCentroids\n", iteration);
-            for (int i = 0; i < k * dims; i++)
-                printf("%f ", global_centroids[i]);
-            printf("\n\tAuxCentroids\n");
-            for (int i = 0; i < k * dims; i++)
-                printf("%f ", global_aux_centroids[i]);
-            printf("\n\tClassMap\n");
-            for (int i = 0; i < k; i++)
-                printf("%d ", global_class_map[i]);
-            printf("\n\tPPC\n");
-            for (int i = 0; i < k; i++)
-                printf("%d ", global_points_per_class[i]);
-            printf("\n\n");
-
-            fflush(stdout);
-        }*/
-
         // Critical zone: update return parameters
         pthread_mutex_lock(global_params -> return_sync_mutex);
         *(global_params -> changes_return_ptr) += local_changes;
@@ -433,10 +409,6 @@ void* kernel(void* args) {
         (*(global_params -> changes_return_ptr) > *(global_params -> min_changes_ptr)) && \
         (pow(*(global_params -> max_threshold_ptr), 2) < *(global_params -> max_dist_return_ptr))
     );
-
-    printf("Rank %ld got out\n\tIt: %d < %d\n\tMinCh: %d > %d\n\tMaxDist: %f < %f\n\n", thread_rank,
-        iteration, *(global_params -> max_iterations_ptr), *(global_params -> changes_return_ptr), *(global_params -> min_changes_ptr),
-        *(global_params -> max_dist_return_ptr), pow(*(global_params -> max_threshold_ptr), 2));
 
     free(local_points_per_class);
     free(local_aux_centroids);
