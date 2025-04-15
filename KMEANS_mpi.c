@@ -496,7 +496,7 @@ int main(int argc, char *argv[])
 				// Compute the new centroid value by averaging the coordinates
 				float centroid_val = auxCentroids[global_idx * D + j] / pointsPerClass[global_idx];
 				// Compute the difference with the previous value
-				float diff = centroids[global_idx * D + j] - centroid_val;
+				float diff = local_centroids[i * D + j] - centroid_val;
 				distance += diff * diff;
 				// Update the local centroid with the new value (coordinate)
 				local_centroids[i * D + j] = centroid_val;

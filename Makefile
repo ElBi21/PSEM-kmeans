@@ -60,7 +60,7 @@ KMEANS_omp: KMEANS_omp.c
 KMEANS_mpi: KMEANS_mpi.c
 	$(MPICC) $(FLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
-KMEANS_cuda: KMEANS_cuda.cu
+KMEANS_cuda: KMEANS_cuda_final2.cu
 	$(CUDACC) $(CUDAFLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
 KMEANS_cuda_t: KMEANS_cuda_t.cu
