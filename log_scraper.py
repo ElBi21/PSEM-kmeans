@@ -60,7 +60,8 @@ def main_slurm(out_file: str, check_for: str) -> None:
             with open(path, "r", encoding="utf-8") as file:
                 for line in file:
                     if pattern.search(line):
-                        line = line[14:-9]
+                        line = line[13:-9]
+                        print(line)
 
                         if run_str not in results.keys():
                             results[run_str] = []
@@ -118,5 +119,5 @@ if __name__ == "__main__":
     #main_slurm("mpi_omp_scrape_20d_slurm.json", "mpi_omp_input20D.inp")
     #seq_slurm("seq_20d_slurm.json", "seq_input20D.inp")
     #main_slurm("mpi_omp_scrape_100d_slurm.json", "mpi_omp_input100d")
-    main_slurm("pt_20d_slurm.json", "pt_input20D")
+    main_slurm("pt-scrape_20d_slurm.json", "pt_input20D")
     #print(check_json("mpi_scrape_100d4.json"))
