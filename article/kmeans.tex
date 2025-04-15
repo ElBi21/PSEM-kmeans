@@ -229,7 +229,7 @@ for (i = 0; i < K; i++) {
 \begin{figure}
     \label{mpi_speedup}
     \centering
-    \includegraphics[width=\linewidth]{imgs/mpi_speedup_new.png}
+    \includegraphics[width=\linewidth]{imgs/mpi_speedup.png}
     \caption{Speedup of the MPI application with three different tests}
 \end{figure}
 
@@ -367,6 +367,7 @@ After executing the second kernel, the program continues repeating in loop the t
     \label{stats_mpi_omp}
     \centering
     \includegraphics[width=\linewidth]{imgs/mpi_omp_speedup.png}
+
     \caption{Comparison of the speedup of the MPI + OpenMP program, on three different input tests. Each plot compares the program on a set amount of processes}
 \end{figure*}
 
@@ -376,28 +377,7 @@ So far, we implemented various solutions for our programs, which employed either
 \nwl
 In this section we will show how multi-threading approaches can be combined with the famous multi-processing library MPI, and this will be done thanks to the OpenMP library.
 
-
 % TO REDO COMPLETELY
-
-%\begin{figure}
-%    %\label{stats_mpi_omp}
-%    \centering
-%    \includegraphics[width = 0.49\linewidth]{imgs/mpi_speedup.jpeg}
-%    \includegraphics[width = 0.49\linewidth]{imgs/mpi_eff.jpeg}
-%    \\
-%    \includegraphics[width = 0.49\linewidth]{imgs/omp_speedup.jpeg}
-%    \includegraphics[width = 0.49\linewidth]{imgs/omp_eff.jpeg}
-%    %\\
-%    %\includegraphics[width = \linewidth]{imgs/cuda_times.png}
-%    \caption{On the left, the speedups of MPI (above) and OpenMP (below), with different numbers of processes / threads; on the right, the relative efficiency}
-%\end{figure}
-
-%\begin{figure}
-%    \label{stats_cuda}
-%    \centering
-%    \includegraphics[width = \linewidth]{imgs/cuda_times.png}
-%    \caption{Average execution times of the CUDA program against the sequential program, comparing two different inputs}
-%\end{figure}
 
 With MPI, we noticed that by augmenting the number of processes, the speed-up continued to grow. However, as expected, after a given number of processes we don't have anymore a linear scaling of the performances. With the input file \verb|input100D.inp|, which has $|X| = 10^4$, we start observing a non-linear increase already at $p = 5$, while with input file \verb|input100D2.inp|, which has $|X| = 10^5$, we stop increasing linearly after $p = 6$. We can see this behaviour in Figure \textbf{1}. This is because the overhead of exchanging data starts to become tangible, affecting negatively the performances. The parameters given to the program were the following:
 
@@ -408,10 +388,24 @@ With MPI, we noticed that by augmenting the number of processes, the speed-up co
 
 For the sole exception that with \verb|input2D2.inp| the number of centroids was $10$, as $|X_{2D}| = 20$.
 
+Regarding the CUDA implementation, we show in Figure 2 its performances, compared to the ones of the sequential version. For this comparison, two different test inputs have been used, so that to better show the capabilities of this version. We can notice how the sequential version takes, in most of the cases, higher times for finishing executing. The only exception to this is with the input \verb|input2D2.inp|, where $|X|$ is incredibly small. In that case, there is a great overhead, given by the memory movements needed by CUDA.
+\nwl
+However, the difference can be seen with files containing a greater amount of data: the sequential version on input file \verb|input100D2.inp| takes large amount of data, with both of the tests. On Table \ref{cuda_seq_exec} are listed the average timings for both versions on 30 samples each, and as we can see, the advantage of using CUDA against the sequential counterpart becomes evident when the number of data gets over the order of $10^4$ (indeed, the input file \verb|input20D.inp| contains 10,000 points). At the end, CUDA is capable of reaching speedups of roughly $15.41\times$ over the sequential version:
+
+\[ \frac{\frac{17.353409s}{1.171914s} + \frac{74.396411s}{4.647139s}}{2} \simeq 15.41 \]
+
+\subsection{MPI + OpenMP}
+
+\section{Conclusions}
+
+% Bibliography
+\bibliographystyle{plain}
+\bibliography{bibliography}
+
 \begin{table*}
     \renewcommand{\arraystretch}{1.3}
     \caption{Average execution times of MPI $\left(\mu \pm \sigma^2\right)$}
-    \label{mpi_exec}
+    \label{mpi_timings_table}
     \centering
     \begin{tabular}{|c||c|c|c|}
     \hline
@@ -438,7 +432,7 @@ For the sole exception that with \verb|input2D2.inp| the number of centroids was
 \begin{table*}
     \renewcommand{\arraystretch}{1.3}
     \caption{Average execution times of PThread $\left(\mu \pm \sigma^2\right)$}
-    \label{mpi_exec}
+    \label{pt_timings_table}
     \centering
     \begin{tabular}{|c||c|c|c|}
     \hline
@@ -511,13 +505,111 @@ For the sole exception that with \verb|input2D2.inp| the number of centroids was
     \end{tabular}
 \end{table*}
 
-Regarding the CUDA implementation, we show in Figure 2 its performances, compared to the ones of the sequential version. For this comparison, two different test inputs have been used, so that to better show the capabilities of this version. We can notice how the sequential version takes, in most of the cases, higher times for finishing executing. The only exception to this is with the input \verb|input2D2.inp|, where $|X|$ is incredibly small. In that case, there is a great overhead, given by the memory movements needed by CUDA.
-\nwl
-However, the difference can be seen with files containing a greater amount of data: the sequential version on input file \verb|input100D2.inp| takes large amount of data, with both of the tests. On Table \ref{cuda_seq_exec} are listed the average timings for both versions on 30 samples each, and as we can see, the advantage of using CUDA against the sequential counterpart becomes evident when the number of data gets over the order of $10^4$ (indeed, the input file \verb|input20D.inp| contains 10,000 points). At the end, CUDA is capable of reaching speedups of roughly $15.41\times$ over the sequential version:
+\begin{table*}
+    \label{mpi_pt_speedup_table}
+    \centering
+    \caption{Speedups of MPI and PThread}
+    \renewcommand{\arraystretch}{1.3}
+    \begin{tabular}{c c}
+        \resizebox{0.45\textwidth}{!}{
+        \begin{tabular}{|c||c|c|c|}
+            \hline
+            \multirow{2}{*}{\textbf{Processes}} & \multicolumn{3}{c|}{\textbf{Input files (in dimensions)}} \\
+            \cline{2-4}
+             & 20D & 100D & 100D$_2$ \\
+            \hline\hline
+            1 & 0.998$\times$ & 0.999$\times$ & 1.0$\times$ \\
+            \cline{2-4}
+            2 & 1.939$\times$ & 1.979$\times$ & 1.99$\times$ \\
+            \cline{2-4}
+            4 & 3.713$\times$ & 3.854$\times$ & 3.964$\times$ \\
+            \cline{2-4}
+            8 & 6.807$\times$ & 7.358$\times$ & 7.898$\times$ \\
+            \cline{2-4}
+            16 & 11.291$\times$ & 13.341$\times$ & 15.666$\times$ \\
+            \cline{2-4}
+            32 & 14.618$\times$ & 21.554$\times$ & 30.586$\times$ \\
+            \cline{2-4}
+            64 & 8.373$\times$ & 16.389$\times$ & 53.759$\times$ \\
+            \hline
+        \end{tabular}
+    } & \resizebox{0.45\textwidth}{!}{
+        \begin{tabular}{|c||c|c|c|}
+            \hline
+            \multirow{2}{*}{\textbf{Threads}} & \multicolumn{3}{c|}{\textbf{Input files (in dimensions)}} \\
+            \cline{2-4}
+            & 20D & 100D & 100D$_2$ \\
+            \hline\hline
+            1 & 0.995$\times$ & 0.992$\times$ & 0.998$\times$ \\
+            \cline{2-4}
+            2 & 1.952$\times$ & 1.982$\times$ & 1.997$\times$ \\
+            \cline{2-4}
+            4 & 3.788$\times$ & 3.939$\times$ & 3.992$\times$ \\
+            \cline{2-4}
+            8 & 7.089$\times$ & 7.74$\times$ & 7.97$\times$ \\
+            \cline{2-4}
+            16 & 12.206$\times$ & 14.845$\times$ & 15.868$\times$ \\
+            \cline{2-4}
+            32 & 18.395$\times$ & 27.07$\times$ & 31.283$\times$ \\
+            \cline{2-4}
+            64 & 24.537$\times$ & 43.226$\times$ & 59.319$\times$ \\
+            \hline
+        \end{tabular}
+    }
+    \end{tabular}
+\end{table*}
 
-\[ \frac{\frac{17.353409s}{1.171914s} + \frac{74.396411s}{4.647139s}}{2} \simeq 15.41 \]
-
-\subsection{MPI + OpenMP}
+\begin{table*}
+    \label{mpi_omp_speedup_table}
+    \centering
+    \renewcommand{\arraystretch}{1.3}
+    \caption{Speedups of MPI-OMP}
+    \resizebox{0.45\textwidth}{!}{
+        \begin{tabular}{|c|c||c|c|c|}
+            \hline
+            \multirow{2}{*}{\textbf{Processes}} & \multirow{2}{*}{\textbf{Threads}} & \multicolumn{3}{c|}{\textbf{Input files (in dimensions)}} \\
+            \cline{3-5}
+            & & 20D & 100D & 100D$_2$ \\
+            \hline\hline
+            \multirow{6}{*}{1} & 1 & 0.991$\times$ & 0.998$\times$ & 1.0$\times$ \\
+            \cline{2-5}
+             & 2 & 1.966$\times$ & 1.987$\times$ & 1.989$\times$ \\
+            \cline{2-5}
+             & 4 & 3.815$\times$ & 3.91$\times$ & 3.962$\times$ \\
+            \cline{2-5}
+             & 8 & 7.054$\times$ & 7.55$\times$ & 7.922$\times$ \\
+            \cline{2-5}
+             & 16 & 11.287$\times$ & 13.439$\times$ & 14.832$\times$ \\
+            \cline{2-5}
+             & 32 & 12.385$\times$ & 20.714$\times$ & 24.725$\times$ \\
+            \hline\hline
+            \multirow{6}{*}{2} & 1 & 1.927$\times$ & 1.973$\times$ & 1.99$\times$ \\
+            \cline{2-5}
+             & 2 & 3.519$\times$ & 3.872$\times$ & 3.968$\times$ \\
+            \cline{2-5}
+             & 4 & 6.835$\times$ & 7.354$\times$ & 7.907$\times$ \\
+            \cline{2-5}
+             & 8 & 11.606$\times$ & 13.463$\times$ & 15.594$\times$ \\
+            \cline{2-5}
+             & 16 & 15.353$\times$ & 22.109$\times$ & 27.604$\times$ \\
+            \cline{2-5}
+             & 32 & 11.114$\times$ & 24.745$\times$ & 48.511$\times$ \\
+            \hline\hline
+            \multirow{6}{*}{4} & 1 & 3.659$\times$ & 3.846$\times$ & 3.964$\times$ \\
+            \cline{2-5}
+             & 2 & 6.854$\times$ & 7.306$\times$ & 7.923$\times$ \\
+            \cline{2-5}
+             & 4 & 11.78$\times$ & 13.473$\times$ & 15.63$\times$ \\
+            \cline{2-5}
+             & 8 & 17.22$\times$ & 22.401$\times$ & 30.014$\times$ \\
+            \cline{2-5}
+             & 16 & 15.743$\times$ & 28.407$\times$ & 56.154$\times$ \\
+            \cline{2-5}
+             & 32 & 0.782$\times$ & 3.957$\times$ & 21.217$\times$ \\
+            \hline
+        \end{tabular}
+    }
+\end{table*}
 
 \begin{table*}
     \renewcommand{\arraystretch}{1.3}
@@ -542,14 +634,5 @@ However, the difference can be seen with files containing a greater amount of da
     \textbf{A}: \verb|<program> <input> 40 5000 1 0.0001 <output>| & \textbf{B}: \verb|<program> <input> 30 500 0.1 0.1 <output>|        
     \end{tabular}
 \end{table*}
-
-\subsection{MPI + PThreads}
-
-\section{Conclusions}
-
-
-% Bibliography
-\bibliographystyle{plain}
-\bibliography{bibliography}
 
 \end{document}
