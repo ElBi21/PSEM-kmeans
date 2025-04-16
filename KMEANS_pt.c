@@ -245,8 +245,6 @@ void* kernel(void* args) {
 
     // Dump some data from the struct
     long thread_rank = kernel_args -> tsf_rank;
-    //long thread_count = kernel_args -> tsf_count;
-    // printf("Moving test from thread %ld! :D\n", thread_rank);
     
     int dims = global_params -> d;
     int k = global_params -> k;

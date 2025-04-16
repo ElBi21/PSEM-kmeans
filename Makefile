@@ -45,35 +45,17 @@ all: $(OBJS)
 KMEANS_seq: KMEANS.c
 	$(CC) $(FLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
-KMEANS_seq_correctness: KMEANS.c
-	$(CC) $(FLAGS) -mavx2 -mfma $(DEBUG) $< $(LIBS) -o $@.out
-
 KMEANS_pt: KMEANS_pt.c
 	$(CC) $(FLAGS) $(DEBUG) $(PTHREADS) $(LIBS) $< -o $@.out
-
-KMEANS_pt_old: KMEANS_pt_old.c
-	$(CC) $(FLAGS) $(DEBUG) $(PTHREADS) $(LIBS) $< -o $@.out
-
-KMEANS_omp: KMEANS_omp.c
-	$(CC) $(FLAGS) $(DEBUG) $(OMPFLAG) $< $(LIBS) -o $@.out
 
 KMEANS_mpi: KMEANS_mpi.c
 	$(MPICC) $(FLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
-KMEANS_cuda: KMEANS_cuda_final2.cu
-	$(CUDACC) $(CUDAFLAGS) $(DEBUG) $< $(LIBS) -o $@.out
-
-KMEANS_cuda_t: KMEANS_cuda_t.cu
+KMEANS_cuda: KMEANS_cuda.cu
 	$(CUDACC) $(CUDAFLAGS) $(DEBUG) $< $(LIBS) -o $@.out
 
 KMEANS_omp_mpi: KMEANS_omp_mpi.c
 	$(MPICC) $(FLAGS) $(DEBUG) $(OMPFLAG) $< $(LIBS) -o $@.out
-
-KMEANS_cuda_mpi: KMEANS_cuda_mpi.cu
-	$(CUDACC) $(CUDAFLAGS) -lmpi $(DEBUG) $< $(LIBS) -o $@.out
-
-KMEANS_mpi_pthreads: KMEANS_mpi_pthreads.c
-	$(MPICC) $(FLAGS) $(DEBUG) $(PTHREADS) $< $(LIBS) -o $@.out
 
 # Remove the target files
 clean:
