@@ -3,4 +3,4 @@
 
 ---
 
-Project made by [@ElBi21](https://github.com/ElBi21), [@r0mania](https://github.com/r0mania) and [@DavideDDB23](https://github.com/DavideDDB23) for the Programmazione di Sistemi Embedded e Multicore course at Sapienza University of Rome during the academic year 2024/25
+Project made by [@ElBi21](https://github.com/ElBi21) and [@r0mania](https://github.com/r0mania) for the Programmazione di Sistemi Embedded e Multicore course at Sapienza University of Rome during the academic year 2024/25
