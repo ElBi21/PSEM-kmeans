@@ -264,7 +264,7 @@ __global__ void assignment_step(float* data, float* centroids, int* class_map, i
 			float distance;
 
 			// Compute the euclidean distance
-			euclideanDistance(&data[data_index], &centroids[centroid * gpu_d], gpu_d, &distance);
+			euclideanDistance(&data[data_index], &shared_centroids[centroid * gpu_d], gpu_d, &distance);
 
 			// If distance is smaller, replace the distance and assign new class
 			if (distance < min_dist) {

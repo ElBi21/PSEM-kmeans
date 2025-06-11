@@ -567,7 +567,7 @@ __global__ void kmeans(
 
     extern __shared__ int sh_pointsPerClass[]; //K
 
-    extern __shared__ int sh_distK[]; //K
+    extern __shared__ float sh_distK[]; //K
 
 
     //sec 4
