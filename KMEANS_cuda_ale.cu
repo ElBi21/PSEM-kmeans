@@ -334,6 +334,8 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMalloc((void**)&d_distK,  K*sizeof(float)));
     CUDA_CHECK(cudaMalloc((void**)&d_it,  sizeof(int)));
 
+    CUDA_CHECK(cudaMemset(d_classMap, 0, N * sizeof(int)));
+
     // Copy data from host to device
     CUDA_CHECK(cudaMemcpy(d_points, points, N*D*sizeof(float), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_centroids, centroids, K*D*sizeof(float), cudaMemcpyHostToDevice));
