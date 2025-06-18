@@ -197,8 +197,8 @@ This function could be modified
 */
 __device__ void euclideanDistance(float* data, float* centroids, int data_idx, int centroid_idx, float* return_addr) {
 	float dist = 0.0;
-	for (int i = 0; i < gpu_d; i++) {
-		float temp = (data[data_idx + gpu_d * i] - centroids[centroid_idx * gpu_d + i]);
+	for (int dim = 0; dim < gpu_d; dim++) {
+		float temp = (data[data_idx + gpu_n * dim] - centroids[centroid_idx * gpu_d + dim]);
 		dist += temp * temp;
 	}
 
@@ -344,14 +344,13 @@ __global__ void update_step_points(float* data, int* class_map, float* aux_centr
 						(threadIdx.y * blockDim.x) +
 						threadIdx.x;
 
-	extern __shared__ float shared_aux_centroids[];
+	// extern __shared__ float shared_aux_centroids[];
 
-	if (thread_index < gpu_K * gpu_d) {
-		shared_aux_centroids[thread_index] = 0.0;
-	}
+	// if (thread_index < gpu_K * gpu_d) {
+	// 	shared_aux_centroids[thread_index] = 0.0;
+	// }
 
 	if (thread_index < gpu_n) {
-		// int data_index = thread_index * gpu_d;
 		// Get the class assignment for a given point
 		int class_assignment = class_map[thread_index];
 		int centroid_index = class_assignment - 1;
@@ -361,19 +360,15 @@ __global__ void update_step_points(float* data, int* class_map, float* aux_centr
 
 		for (int dim = 0; dim < gpu_d; dim++) {
 			// For each dimension, add to aux_centroids the coordinates
-			atomicAdd(&(shared_aux_centroids[centroid_index * gpu_d + dim]), data[thread_index + gpu_d * dim]);
+			atomicAdd(&(aux_centroids[centroid_index * gpu_d + dim]), data[thread_index + gpu_n * dim]);
 		}
 	}
 
-	__syncthreads();
+	//__syncthreads();
 
-	if (thread_index < gpu_K * gpu_d) {
-		//for (int dim = 0; dim < gpu_d; dim++) {
-		atomicAdd(&aux_centroids[thread_index], shared_aux_centroids[thread_index]);
-		//}
-
-		printf("%f -> %f\n", shared_aux_centroids[thread_index], aux_centroids[thread_index]);
-	}
+	//if (thread_index < gpu_K * gpu_d) {
+	//	&aux_centroids[thread_index], shared_aux_centroids[thread_index]);
+	//}
 }
 
 /*  To each thread, assign a centroid. The coordinates of each centroid get averaged, and then the
@@ -394,12 +389,6 @@ __global__ void update_step_centroids(float* aux_centroids, float* centroids, in
 	int thread_index = (blockIdx.y * gridDim.x * blockDim.x * blockDim.y) + (blockIdx.x * blockDim.x * blockDim.y) +
 						(threadIdx.y * blockDim.x) +
 						threadIdx.x;
-	
-	// if (thread_index == 0) {
-	//  	printf("\n\n\n\n\n");
-	//  	for (int i = 0; i < gpu_d * gpu_K; i++)
-	//  		printf("%f ", aux_centroids[i]);
-	// }
 
 	// Eventually, make it run such that each thread is a dimensions,
 	// the dimensions get averaged and then each thread does the distance or whatever
@@ -412,10 +401,10 @@ __global__ void update_step_centroids(float* aux_centroids, float* centroids, in
 			distance += \
 				(centroids[thread_index * gpu_d + dim] - aux_centroids[thread_index * gpu_d + dim]) * \
 				(centroids[thread_index * gpu_d + dim] - aux_centroids[thread_index * gpu_d + dim]);
-		}
 
-		// Perform sqrt of distance
-		// distance = sqrt(distance);
+			// Update centroids within GPU
+			centroids[thread_index * gpu_d + dim] = aux_centroids[thread_index * gpu_d + dim];
+		}
 
 		if (distance > *max_distance) {
 			// Exchange atomically, disregard old value
@@ -426,7 +415,6 @@ __global__ void update_step_centroids(float* aux_centroids, float* centroids, in
 
 
 int main(int argc, char* argv[]) {
-
 	//START CLOCK***************************************
 	clock_t start, end;
 	start = clock();
@@ -635,7 +623,7 @@ int main(int argc, char* argv[]) {
 	do {
 		it++;
 		
-		// Reset changes and max distance
+		// Reset changes and max distance0.0
 		CHECK_CUDA_CALL(cudaMemset(gpu_changes, 0, sizeof(int)));
 		CHECK_CUDA_CALL(cudaMemset(gpu_max_distance, FLT_MIN, sizeof(float)));
 		
@@ -658,11 +646,15 @@ int main(int argc, char* argv[]) {
 		update_step_centroids<<<dyn_grid_cent, gen_block>>>(gpu_aux_centroids, gpu_centroids, gpu_points_per_class, gpu_max_distance);
 		CHECK_CUDA_LAST();
 
+		CHECK_CUDA_CALL(cudaDeviceSynchronize());
+
 		// Update effectively the positions and take maxDist
 		CHECK_CUDA_CALL(cudaMemcpy(&maxDist, gpu_max_distance, sizeof(float), cudaMemcpyDeviceToHost));
-		CHECK_CUDA_CALL(cudaMemcpy(gpu_centroids, gpu_aux_centroids, centroids_size, cudaMemcpyDeviceToDevice));
-		CHECK_CUDA_CALL(cudaMemset(gpu_aux_centroids, 0, K * samples * sizeof(float)));
+		// CHECK_CUDA_CALL(cudaMemcpy(gpu_centroids, gpu_aux_centroids, K * samples * sizeof(float), cudaMemcpyDeviceToDevice));
+		CHECK_CUDA_CALL(cudaMemset(gpu_aux_centroids, 0.0, K * samples * sizeof(float)));
 		CHECK_CUDA_CALL(cudaMemset(gpu_points_per_class, 0, K * sizeof(int)));
+
+		CHECK_CUDA_CALL(cudaDeviceSynchronize());
 		
 		sprintf(line, "\n[%d] Cluster changes: %d\tMax. centroid distance: %f", it, changes, maxDist);
 		outputMsg = strcat(outputMsg,line);
