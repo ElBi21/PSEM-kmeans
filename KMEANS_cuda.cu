@@ -357,11 +357,12 @@ __global__ void update_step_points(float* data, int* class_map, float* aux_centr
 	for (int i = local_thread_index; i < total; i += block_size) {
  	   shared_aux_centroids[i] = 0.0;
 	}
+
 	for (int k = local_thread_index; k < gpu_K; k += block_size) {
         shared_points_per_class[k] = 0;
     }
-    __syncthreads();
 
+    __syncthreads();
 
 	if (thread_index < gpu_n) {
 		// Get the class assignment for a given point
@@ -412,8 +413,8 @@ __global__ void update_step_centroids(float* aux_centroids, float* centroids, in
 
 	int local_thread_index = threadIdx.x + threadIdx.y * blockDim.x;
 	extern __shared__ float shared_max_distance[];
-	if (local_thread_index==0){
-		shared_max_distance[0] =  FLT_MIN;
+	if (local_thread_index == 0){
+		shared_max_distance[0] = FLT_MIN;
 	}
 
 	// Eventually, make it run such that each thread is a dimensions,

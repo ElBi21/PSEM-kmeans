@@ -1,7 +1,3 @@
-
-% Measure CUDA
-% Add sequential timings
-
 \documentclass[11pt, journal]{IEEEtran}
 
 \usepackage{lipsum}
@@ -16,13 +12,13 @@
 \usepackage{graphicx}
 \usepackage{adjustbox}
 \usepackage{makecell}
-\usepackage[dvipsnames]{xcolor}
+\usepackage[table, dvipsnames]{xcolor}
 \usepackage{tikz}
 \usepackage{lipsum}
 \usepackage{listings}
 \usepackage{fontawesome5}
 \usepackage{tcolorbox}
-\usepackage[dvipsnames]{xcolor}
+\usepackage[table, dvipsnames]{xcolor}
 \usepackage[ruled]{algorithm2e}
 \usepackage{array}
 %\usepackage{caption}
@@ -342,17 +338,21 @@ The PThread program was tested with 1, 2, 4, 8, 16, 32 and 64 threads. The runti
 
 \section{Parallelizing with CUDA}
 
-In recent years, we have seen how GPUs play crucial roles when it comes to parallelizing a program with multiple threads. Indeed, the model proposed by NVIDIA for its CUDA platforms (namely, the Single-Thread Multiple-Data model) turned out to be very efficient, by allowing notable speed-ups and augmentation of the throughput. Here follows an explanation of how we decided to design a possible CUDA implementation.
+In recent years, we have seen how GPUs play crucial roles when it comes to parallelizing a program with multiple threads. Indeed, the model proposed by NVIDIA for its CUDA platforms (namely, the Single-Thread Multiple-Data model) turned out to be very efficient, by allowing notable speed-ups and augmentation of the throughput. Clearly, this can be applied also to the $k$-means algorithm, and we'll now proceed to illustrate our proposed model.
 
 \subsection{Designing the parallel structure}
 
-As we have shown in Algorithm \ref{algkmeans}, the $k$-means algorithm can be logically split into two steps: the assignment step and the update step. However, while logically this division may sound reasonable, it is not appropriate for the STMD model that NVIDIA has at the core of its devices. This is because of the needed data for the two steps: the assignment step needs to work only with the data points, but can be parallelized by splitting the data into multiple parts; the update step instead needs to work with both all the data and all the centroids, so parallelizing the step as a whole becomes quite hard.
-\nwl
-A simpler approach would be to split the update step in two parts, one that uses a fraction of the points, and the other that uses a fraction of the centroids. This would create in total three parallelization steps. However, the assignment step and the first part of the update step can be merged together, since they both need to work with part of the data. This is the reason why we decided to implement the program with two kernels, called respectively \verb|step_1_kernel| and \verb|step_2_kernel|, where the first kernel can be considered as points-based and the second kernel as centroids-based.
+As we have shown in Algorithm \ref{algkmeans}, the $k$-means algorithm can be logically split into two steps: the assignment step and the update step. However, while logically this division may sound reasonable, it is not appropriate for the STMD model that NVIDIA has at the core of its devices, and this is because of the data needed by the two steps:
+\begin{itemize}
+    \item the \textbf{assignment step} needs to work only with the data points, but can be parallelized by splitting the data into multiple parts;
+    \item the \textbf{update step} instead needs to work with both all the data and all the centroids, so parallelizing the step as a whole becomes quite hard.
+\end{itemize} 
 
-\subsection{Program parameters and custom \texttt{atomicMax}}
+A simpler approach would be to split the update step in two parts, one which distributes the points over the threads, and another that distributes the centroids. This would create in total three parallelization steps. In our implementation, such steps are developed in the following three kernels: \verb|assignment_step|, \verb|update_step_points| and \verb|update_step_centroids|.
 
-We decided to organize the threads in two dimensional blocks of $32 \times 32$ threads, and the blocks are instead organized in a one dimensional grid. The size of the grid depends on the called kernel: usually, we have that $|X| \gg |C|$, so it's pointless for CUDA to reserve a grid of threads for the centroids that has the same size of the grid of the points. Indeed, the grids' single dimensions are dynamic, and are computed as follows:
+\subsection{Program parameters, custom \texttt{atomicMax} and memory management}
+
+We decided to organize the threads in two dimensional blocks of $32 \times 32$ threads, and the blocks are instead organized in a one dimensional grid. The size of the grid is dynamically determined depending on the called kernel: usually, we have that $|X| \gg k$, so it's pointless for CUDA to reserve a grid of threads for the centroids that has the same size of the grid of the points. The grids' dimensions are computed following these formulas:
 
 \[ \texttt{points\_grid\_size} \; = \; \frac{\left| X \right|}{32 \times 32} + 1 \]
 \[ \texttt{centroids\_grid\_size} \; = \; \frac{k}{32 \times 32} + 1 \]
@@ -377,22 +377,73 @@ The idea of the function is that CUDA tries continuously to perform an \verb|ato
 \end{center}
 
 The function will exit only when the value in the specified address is equal to the one that the program expects to be there, before performing the atomic transaction. This is important, so that to avoid that the function overwrites any unintentional value.
+\nwl
+Especially with CUDA, a great part of the possible sppedup that an application can achieve is given by the memory accesses. One of the many possibilities that CUDA offers, that is not instead possible with CPUs (be it with multi-processing or multi-threading programming), is to \textbf{freely manage} the \textbf{L2 cache} of the GPU (also known as the shared memory). In our implementation, we made sure to use the shared memory as much as possible, and to transfer the data to the global memory only when needed. Moreover, we made sure to use most efficiently the \textbf{memory coalescing} that CUDA does whenever retrieving data from the global memory: this has been done by "transposing" the \verb|data| array. Normally, the \verb|data| array would be organized as follows:
+
+\begin{center}
+    \resizebox{\linewidth}{!}{
+        \renewcommand{\arraystretch}{1.3}
+        \begin{tabular}{c|c|c|c|c|c|c|c}
+            \cline{2-4}\cline{6-7}
+            $\Longrightarrow$ & $p_{1, \; 1}$ & $p_{1, \; 2}$ & $p_{1, \; 3}$ & $...$ & $p_{1, \; d-1}$ & $p_{1, \; d}$ & $\hookleftarrow_1$ \\
+            \cline{2-4}\cline{6-7}
+            $\hookrightarrow_1$ & $p_{2, \; 1}$ & $p_{2, \; 2}$ & $p_{2, \; 3}$ & $...$ & $p_{2, \; d-1}$ & $p_{2, \; d}$ & $\hookleftarrow_2$ \\
+            \cline{2-4}\cline{6-7}
+            \multicolumn{1}{c}{} & \multicolumn{3}{c}{$\vdots$} & \multicolumn{1}{c}{$\ddots$} & \multicolumn{2}{c}{$\vdots$} & \\
+            \cline{2-4}\cline{6-7}
+            $\hookrightarrow_{n-1}$ & $p_{n, \; 1}$ & $p_{n, \; 2}$ & $p_{n, \; 3}$ & $...$ & $p_{n, \; d-1}$ & $p_{n, \; d}$ & \\
+            \cline{2-4}\cline{6-7}
+        \end{tabular}
+    }
+\end{center}
+
+\nwl
+where the notation $p_{i, \; j}$ stands for the $j^{\text{th}}$ coordinate of the $i^{\text{th}}$ point; in other words, the array was originally stored point-wise (so first all the $d$ coordinates of the first point, then the $d$ coordinates of the second point, and so on...). After transposing the array, it became as follows:
+
+\begin{center}
+    \resizebox{\linewidth}{!}{
+        \renewcommand{\arraystretch}{1.3}
+        \begin{tabular}{c|c|c|c|c|c|c|c}
+            \cline{2-4}\cline{6-7}
+            $\Longrightarrow$ & $p_{1, \; 1}$ & $p_{2, \; 1}$ & $p_{3, \; 1}$ & $...$ & $p_{n-1, \; 1}$ & $p_{n, \; 1}$ & $\hookleftarrow_1$ \\
+            \cline{2-4}\cline{6-7}
+            $\hookrightarrow_1$ & $p_{1, \; 2}$ & $p_{2, \; 2}$ & $p_{3, \; 2}$ & $...$ & $p_{n-1, \; 2}$ & $p_{n, \; 2}$ & $\hookleftarrow_2$ \\
+            \cline{2-4}\cline{6-7}
+            \multicolumn{1}{c}{} & \multicolumn{3}{c}{$\vdots$} & \multicolumn{1}{c}{$\ddots$} & \multicolumn{2}{c}{$\vdots$} & \\
+            \cline{2-4}\cline{6-7}
+            $\hookrightarrow_{d-1}$ & $p_{1, \; d}$ & $p_{2, \; d}$ & $p_{3, \; d}$ & $...$ & $p_{n-1, \; d}$ & $p_{n, \; d}$ & \\
+            \cline{2-4}\cline{6-7}
+        \end{tabular}
+    }
+\end{center}
+
+\nwl
+thus having a data array where the \textbf{coordinates} are \textbf{stored dimension-wise} (so first the first dimension of all the points, then the second dimension, and so on...). This is preferrable since, when computing the new centroids, all threads will work "simultaneously" on the same dimension of the data, so when recovering the data coordinates from the global memory the GPU will load a burst of coordinates who belong to the same dimension together. This, as we'll show later on, \textbf{improves greatly} the speedups and timings of the application. While this may have been done also on the centroids, it is not strictly necessary, since the centroids will be already stored in the shared memory when needed.
 
 \subsection{Analysis of the kernels}
 
-As we mentioned previously, we are making use of two kernels: \verb|step_1_kernel| and \verb|step_2_kernel|. In both kernels, all operations that act on the global memory are performed atomically, which avoid potential race conditions. We here show how both kernels work, alongsize their code snippets.
+\begin{figure*}
+    \label{cuda_runtimes_speedups}
+    \centering
+    \includegraphics[width=\linewidth]{imgs/cuda_timings_speedups.png}
+    \caption{Runtimes and speedups of the CUDA application on different GPUs}
+\end{figure*}
+
+As we mentioned previously, we are making use of three kernels: \verb|assignment_step| and \verb|update_step_points| and \verb|update_step_centroids|. In all kernels, all operations that act on the global memory are \textbf{performed atomically}, which avoid potential race conditions. We here show how all three kernels work.
 \nwl
-The first kernel is called on all the data, and each point is assigned to a thread. First, a preliminary check is performed, to make sure that each thread is assigned to a valid point. While the \verb|if| statement may seem like a possible cause of warp divergence, it doesn't actually impact that much. Indeed, we would only discard part of the final block of kernels, while all the previous blocks are fully used.
+The first kernel is called on all the data, and each point is assigned to a thread. First, a preliminary check is performed, to make sure that each thread is assigned to a valid point. While the \verb|if| statement may seem like a possible cause of warp divergence, it doesn't actually impact that much. Indeed, we would only discard part of the final block of kernels, while all the previous blocks are fully used. Then, each thread will compute the $\ell_2$ norm between its assigned point and all centroids, and will store the class to which each point will be assigned into the \verb|class_int| variable, depending on which $\ell_2$ norm is the smallest. If a change from the previous class assignment is detected, the number of changes will increase.
 \nwl
-Then, each thread will compute the $\ell_2$ norm of each point for all centroids, and will store the class to which each point will be assigned into the \verb|class_int| variable. If a change from the previous class assignment is detected, the number of changes will increase. After that, each thread will proceed to sum the coordinates of its assigned point into the auxiliary centroids matrix. The coordinates will then be averaged in the second kernel.
+The second kernel will have a point assigned to each thread, and each thread will increment, in the \verb|points_per_class| array, the value in the position corresponding to the class assigned to the point. After that, the coordinates of the point are added to the \verb|aux_centroid| array, so that to create, on the new step, the new centroid from the average of the coordinates. Here, both the \verb|points_per_class| and \verb|aux_centroids| arrays are stored in shared memory, and only after a thread computes its contribution to the final array the result in shared memory gets copied over to the global memory (also here it is done through atomic operations, so that to avoid concurrency problems).
 \nwl
-The second kernel performs the same check as \verb|step_1_kernel| on each thread, to ensure that all threads are mapped to a valid centroid. After that, all threads will compute, for each dimension of the centroids, the average coordinate. Once computed, each thread will then perform the $\ell_2$ norm between the previous centroid and the new one, so that to compute the \verb|max_distance| variable, needed for convergence. Finally, via the use of the \verb|custom_atomic_max()| function, the gratest distance is stored in memory.
+The third kernel, \verb|update_step_centroids|, firstly ensure that all threads are mapped to a valid centroid; then all threads will compute, for each dimension of the centroids, the average coordinates of the new centroid. Once done, each thread will then perform the $\ell_2$ norm between the previous centroid and the new one, so that to compute the \verb|max_distance| variable, needed for convergence. Once again, the variable is first stored in shared memory, and it's then stored in global memory via the use of the \verb|custom_atomicMax()| function, which we illustrated previously.
 \nwl
-After executing the second kernel, the program continues repeating in loop the two kernels until one of the convergence conditions is met.
+After executing the third kernel, the program continues repeating in loop the three kernels until one of the convergence conditions is met.
 
 \subsection{CUDA Performance analysis}
 
-The CUDA version performed as can be seen from table \ref{cuda_times}. The speedup is not as impactful as the speedups of the other versions: this is due to the multiple host-device comunication calls that have been performed. The performances may be increased by not only reducing the number of communication host-device, but also by creating a unique kernel, instead of multiple ones. The latter option may also better exploit the shared memory of the device, which gets cleared after a thread terminates its execution.
+The CUDA version performed as can be seen from table \ref{cuda_times}. As we mentioned in the previous section, the correct handling of the memory and exploitation of the memory bursts allows to reach high speedups of the application, as can be seen for the rows with the \textasteriskcentered$^{23}$ apex. In the table we also reported the timings and speedup of a version of the application that wasn't correctly exploiting memory coalescence: indeed, for that version the speedup is not as impactful as the speedups of the other versions. For the sake of comparison, we also sampled the performance of the application in other systems with other NVIDIA GPUs, such as an RTX 4060 (marked by \textasteriskcentered$^4$) and an RTX 5080 (marked by \textasteriskcentered$^5$); in such cases, the speedup is relative to the sequential timings obtained in the other systems.
+
+% eventuale analisi del roofline model
 
 \begin{table}
     \label{cuda_times}
@@ -406,12 +457,27 @@ The CUDA version performed as can be seen from table \ref{cuda_times}. The speed
             \cline{2-4}\cline{2-4}
              & 20D & 100D & 100D$_2$ \\
             \hline\hline
-            \textbf{Runtime} & $0.05633 \pm 0.02272$ & $0.12794 \pm 0.03329$ & $8.46844 \pm 1.29596$ \\
+            \textbf{Runtime}$^{13}$ & $0.05633 \pm 0.02272$ & $0.12794 \pm 0.03329$ & $8.46844 \pm 1.29596$ \\
             \hline
-            \textbf{Speedup} & $6.28 \times$ & $8.32 \times$ & $13.14 \times$ \\
+            \textbf{Speedup}$^{13}$ & $6.28 \times$ & $8.32 \times$ & $13.14 \times$ \\
+            \hline\hline \rowcolor{lightgray!40}
+            \textbf{Runtime}$^{23}$ & $0.038851 \pm 0.00758$ & $0.03343 \pm 0.00402$ & $1.25401 \pm 0.00367$ \\
+            \hline \rowcolor{lightgray!40}
+            \textbf{Speedup}$^{23}$ & $9.11 \times$ & $31.86 \times$ & $88.74 \times$ \\
+            \hline\hline
+            \textbf{Runtime}$^{24}$ & $0.00545 \pm 0.00006$ & $0.00993 \pm 0.00004$ & $0.50741 \pm 0.00337$ \\
+            \hline
+            \textbf{Speedup}$^{24}$ & $35.92 \times$ & $61.9 \times$ & $126.83 \times$ \\
             \hline
         \end{tabular}
     }
+    
+    \nwl
+    \textasteriskcentered$^1$: \textbf{without} a correct handling of memory coalescing\\
+    \textasteriskcentered$^2$: \textbf{with} a correct handling of memory coalescing\\
+    \textasteriskcentered$^3$: executed on an \textbf{RTX Quadro 6000}\\
+    \textasteriskcentered$^4$: executed on a \textbf{GeForce RTX 4060}\\
+    \textasteriskcentered$^5$: executed on a \textbf{GeForce RTX 5080}
 \end{table}
 
 \begin{figure*}
