@@ -75,6 +75,7 @@ def main_slurm(out_file: str, check_for: str) -> None:
     print(f"Saved in total {found} results")
     return None
 
+
 def seq_slurm(out_file: str, check_for: str) -> None:
     print(f"Starting to scrape...\nWill save in {out_file}")
     root = "logs/slurm"
@@ -106,6 +107,38 @@ def seq_slurm(out_file: str, check_for: str) -> None:
     return None
 
 
+def cuda_slurm(out_file: str, check_for: str) -> None:
+    print(f"Starting to scrape...\nWill save in {out_file}")
+    root = "logs/slurm/cuda_20d"
+    pattern = re.compile("Computation: .* seconds")
+    files = os.listdir(root)
+    results = dict()
+    found = 0
+
+    for file_path in files:
+        if file_path.startswith(check_for) and not os.path.isdir(file_path): #and file_path.endswith("_2.txt"):#and file_path.__contains__("_t1_run"):
+            path = os.path.join(root, file_path)
+            run_str = check_for
+
+            with open(path, "r", encoding="utf-8") as file:
+                for line in file:
+                    if pattern.search(line):
+                        line = line[13:-9]
+                        print(line)
+
+                        if run_str not in results.keys():
+                            results[run_str] = []
+                        
+                        results[run_str].append(float(line))
+                        found += 1
+
+    with open(out_file, "w", encoding="utf-8") as json_file:
+        json.dump(results, json_file, indent=4)
+
+    print(f"Saved in total {found} results")
+    return None
+
+
 def check_json(out_file: str):
     if os.path.isfile(out_file):
         with open(out_file, "r") as file:
@@ -119,5 +152,6 @@ if __name__ == "__main__":
     #main_slurm("mpi_omp_scrape_20d_slurm.json", "mpi_omp_input20D.inp")
     #seq_slurm("seq_20d_slurm.json", "seq_input20D.inp")
     #main_slurm("mpi_omp_scrape_100d_slurm.json", "mpi_omp_input100d")
-    main_slurm("pt-scrape_20d_slurm.json", "pt_input20D")
+    #main_slurm("pt-scrape_20d_slurm.json", "pt_input20D")
+    cuda_slurm("cuda-scrape_20d_slurm.json", "cuda_input20D")
     #print(check_json("mpi_scrape_100d4.json"))

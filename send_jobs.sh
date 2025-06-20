@@ -5,7 +5,7 @@ make KMEANS_mpi
 make KMEANS_seq
 make KMEANS_pt
 
-file_test="input100D2.inp"
+file_test="input20D.inp"
 #test_to_do="test_files/$file_test 30 500 0.1 0.1 outputs/out_omp_mpi_32.txt"
 #thread_array=(1 2 4 8 16 32)
 #process_array=(1 2 4)
@@ -43,7 +43,7 @@ for proc in ${process_array[@]}; do
             # echo "srun KMEANS_pt.out $test_to_do $thread > \"logs/slurm/pt_${file_test}_p${proc}_t${thread}_run_${run}.txt\"" >> slurm_batch.sh
             # echo "srun mpirun -np $proc --oversubscribe KMEANS_mpi.out $test_to_do > \"logs/slurm/mpi_${file_test}_p${proc}_t1_run_${run}.txt\"" >> slurm_batch.sh
             # echo "srun KMEANS_seq.out $test_to_do > \"logs/slurm/seq_${file_test}_run_${run}.txt\"" >> slurm_batch.sh
-            echo "srun KMEANS_cuda.out $test_to_do > \"logs/slurm/cuda_${file_test}_run_${run}.txt\"" >> slurm_batch.sh
+            echo "srun KMEANS_cuda_new.out $test_to_do > \"logs/slurm/cuda_20d/cuda_${file_test}_run_${run}.txt\"" >> slurm_batch.sh
 
             sbatch slurm_batch.sh
         done
