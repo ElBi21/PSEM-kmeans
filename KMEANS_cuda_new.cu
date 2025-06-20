@@ -247,6 +247,19 @@ float* transpose(float *array, int N, int D) {
 	return coalescedArray;
 }
 
+/*	Implementation of a custom atomicMax operation for floats. Freely taken from
+ *	https://stackoverflow.com/questions/17399119. Credits to vinograd47
+ *  (User link: https://stackoverflow.com/users/2451683/vinograd47)
+ */
+__device__ float custom_atomicMax(float* value_address, float val) {
+    int* address_as_int = (int*) value_address;
+    int old = *address_as_int, assumed;
+    do {
+        assumed = old;
+        old = atomicCAS(address_as_int, assumed, __float_as_int(fmaxf(val, __int_as_float(assumed))));
+    } while (assumed != old);
+    return __int_as_float(old);
+}
 
 /* 
  *	===	CUDA Kernels ===
@@ -255,7 +268,7 @@ float* transpose(float *array, int N, int D) {
 /*  To each thread, a point with D dimensions gets assigned. The thread must compute the l_2 norm and
  *  take the minimum.
  *
- *  Parameters:
+ *  Parameters:_m
  * 		- `data`: array of points, on the GPU;
  * 		- `centroids`: array of centroids, on the GPU;
  * 		- `class_map`: array with the classes, on the GPU.
@@ -277,19 +290,9 @@ __global__ void assignment_step(float* data, float* centroids, int* class_map, i
 	int block_size = blockDim.x * blockDim.y;
 	int local_thread_index = threadIdx.x + threadIdx.y * blockDim.x;
 
-	int portions = (gpu_K * gpu_d) / block_size;
-	int rest_of_centroids = (gpu_K * gpu_d) % block_size;
-
-	// Copy centroids data into shared memory
-	for (int portion = 0; portion < (portions + 1); portion++) {
-		int copy_index = local_thread_index + portion * block_size;
-		shared_centroids[copy_index] = centroids[copy_index];
-	}
-	
-	// Copy the rest of the centroids, if the division between threads and centroids is uneven
-	if (local_thread_index < rest_of_centroids) {
-		int copy_index = local_thread_index + portions * block_size;
-		shared_centroids[copy_index] = centroids[copy_index];
+	int total = gpu_K * gpu_d;
+	for (int i = local_thread_index; i < total; i += block_size) {
+ 	   shared_centroids[i] = centroids[i];
 	}
 
 	// Wait until all centroids have been copied
@@ -344,11 +347,22 @@ __global__ void update_step_points(float* data, int* class_map, float* aux_centr
 						(threadIdx.y * blockDim.x) +
 						threadIdx.x;
 
-	// extern __shared__ float shared_aux_centroids[];
+	extern __shared__ char shared_mem[];
+	float* shared_aux_centroids = (float*) shared_mem;
+    int* shared_points_per_class = (int*) (shared_mem + sizeof(float) * gpu_K * gpu_d);
 
-	// if (thread_index < gpu_K * gpu_d) {
-	// 	shared_aux_centroids[thread_index] = 0.0;
-	// }
+	int block_size = blockDim.x * blockDim.y;
+	int local_thread_index = threadIdx.x + threadIdx.y * blockDim.x;
+
+	int total = gpu_K * gpu_d;
+	for (int i = local_thread_index; i < total; i += block_size) {
+ 	   shared_aux_centroids[i] = 0.0;
+	}
+	for (int k = local_thread_index; k < gpu_K; k += block_size) {
+        shared_points_per_class[k] = 0;
+    }
+    __syncthreads();
+
 
 	if (thread_index < gpu_n) {
 		// Get the class assignment for a given point
@@ -356,19 +370,23 @@ __global__ void update_step_points(float* data, int* class_map, float* aux_centr
 		int centroid_index = class_assignment - 1;
 
 		// Add 1 to PPC in the corresponding centroid
-		atomicAdd(&(points_per_class[centroid_index]), 1);
+		atomicAdd(&(shared_points_per_class[centroid_index]), 1);
 
 		for (int dim = 0; dim < gpu_d; dim++) {
 			// For each dimension, add to aux_centroids the coordinates
-			atomicAdd(&(aux_centroids[centroid_index * gpu_d + dim]), data[thread_index + gpu_n * dim]);
+			atomicAdd(&(shared_aux_centroids[centroid_index * gpu_d + dim]), data[thread_index + gpu_n * dim]);
 		}
 	}
 
-	//__syncthreads();
+	__syncthreads();
 
-	//if (thread_index < gpu_K * gpu_d) {
-	//	&aux_centroids[thread_index], shared_aux_centroids[thread_index]);
-	//}
+	for (int k = local_thread_index; k < gpu_K; k += block_size) {
+        atomicAdd(&points_per_class[k], shared_points_per_class[k]);
+    }
+	for (int i = local_thread_index; i < total; i += block_size) {
+ 	   atomicAdd(&aux_centroids[i], shared_aux_centroids[i]) ;
+	}
+
 }
 
 /*  To each thread, assign a centroid. The coordinates of each centroid get averaged, and then the
@@ -390,6 +408,13 @@ __global__ void update_step_centroids(float* aux_centroids, float* centroids, in
 						(threadIdx.y * blockDim.x) +
 						threadIdx.x;
 
+
+	int local_thread_index = threadIdx.x + threadIdx.y * blockDim.x;
+	extern __shared__ float shared_max_distance[];
+	if (local_thread_index==0){
+		shared_max_distance[0] =  FLT_MIN;
+	}
+
 	// Eventually, make it run such that each thread is a dimensions,
 	// the dimensions get averaged and then each thread does the distance or whatever
 	if (thread_index < gpu_K) {
@@ -405,12 +430,17 @@ __global__ void update_step_centroids(float* aux_centroids, float* centroids, in
 			// Update centroids within GPU
 			centroids[thread_index * gpu_d + dim] = aux_centroids[thread_index * gpu_d + dim];
 		}
-
-		if (distance > *max_distance) {
-			// Exchange atomically, disregard old value
-			atomicExch(max_distance, distance);
+		if (distance > shared_max_distance[0]) {
+			// Atomic Max, disregard old value
+			custom_atomicMax(&shared_max_distance[0], distance);
 		}
 	}
+
+	__syncthreads();
+	if (local_thread_index==0){
+		custom_atomicMax(max_distance, shared_max_distance[0]);
+	}
+
 }
 
 
@@ -443,15 +473,15 @@ int main(int argc, char* argv[]) {
 
 	// Reading the input data
 	// lines = number of points; samples = number of dimensions per point
-	int lines = 0, samples= 0;  
+	int lines = 0, D= 0;  
 	
-	int error = readInput(argv[1], &lines, &samples);
+	int error = readInput(argv[1], &lines, &D);
 	if (error != 0) {
 		showFileError(error,argv[1]);
 		exit(error);
 	}
 	
-	float *data = (float*) calloc(lines * samples, sizeof(float));
+	float *data = (float*) calloc(lines * D, sizeof(float));
 	if (data == NULL) {
 		fprintf(stderr,"Memory allocation error.\n");
 		exit(-4);
@@ -470,7 +500,7 @@ int main(int argc, char* argv[]) {
 	float maxThreshold = atof(argv[5]);
 
 	int *centroidPos = (int*) calloc(K, sizeof(int));
-	float *centroids = (float*) calloc(K * samples, sizeof(float));
+	float *centroids = (float*) calloc(K * D, sizeof(float));
 	int *classMap = (int*) calloc(lines, sizeof(int));
 
     if (centroidPos == NULL || centroids == NULL || classMap == NULL) {
@@ -486,17 +516,17 @@ int main(int argc, char* argv[]) {
 	
 	// Loading the array of initial centroids with the data from the array data
 	// The centroids are points stored in the data array.
-	initCentroids(data, centroids, centroidPos, samples, K);
+	initCentroids(data, centroids, centroidPos, D, K);
 
-	float* coalesced_centroids = transpose(centroids, K, samples);
+	float* coalesced_centroids = transpose(centroids, K, D);
 	//free(centroids);
 
-	float* coalesced_data = transpose(data, lines, samples);
+	float* coalesced_data = transpose(data, lines, D);
 	//free(data);
 
 
 	printf("\n    Input properties:");
-	printf("\n\tData file: %s \n\tPoints: %d\n\tDimensions: %d\n", argv[1], lines, samples);
+	printf("\n\tData file: %s \n\tPoints: %d\n\tDimensions: %d\n", argv[1], lines, D);
 	printf("\tNumber of clusters: %d\n", K);
 	printf("\tMaximum number of iterations: %d\n", maxIterations);
 	printf("\tMinimum number of changes: %d [%g%% of %d points]\n", minChanges, atof(argv[4]), lines);
@@ -538,7 +568,7 @@ int main(int argc, char* argv[]) {
 	int *pointsPerClass = (int *) malloc(K * sizeof(int));
 	
 	// auxCentroids: mean of the points in each class
-	float *auxCentroids = (float*) malloc(K * samples * sizeof(float));
+	float *auxCentroids = (float*) malloc(K * D * sizeof(float));
 	
 	if (pointsPerClass == NULL || auxCentroids == NULL) {
 		fprintf(stderr,"Memory allocation error.\n");
@@ -563,17 +593,15 @@ int main(int argc, char* argv[]) {
  *
  */
 
-	// Set carveout to be of maximum size available
-	int carveout = cudaSharedmemCarveoutMaxShared;
-
-	CHECK_CUDA_CALL(cudaFuncSetAttribute(assignment_step, cudaFuncAttributePreferredSharedMemoryCarveout, carveout));
+	// Shared Memory Size
 
 	dim3 gen_block(32, 32);
 	dim3 dyn_grid_pts(pts_grid_size);
 	dim3 dyn_grid_cent(K_grid_size);
 
-	int data_size = lines * samples * sizeof(float);
-	int centroids_size = K * samples * sizeof(float);
+	int data_size = lines * D * sizeof(float);
+	int centroids_size = K * D * sizeof(float);
+	int pointperclass_size = K * sizeof(int);
 
 	// GPU pointers
 	float* gpu_data;
@@ -609,7 +637,7 @@ int main(int argc, char* argv[]) {
 	// Initialize constant vars
 	CHECK_CUDA_CALL(cudaMemcpyToSymbol(gpu_K, &K, sizeof(int)));
 	CHECK_CUDA_CALL(cudaMemcpyToSymbol(gpu_n, &lines, sizeof(int)));
-	CHECK_CUDA_CALL(cudaMemcpyToSymbol(gpu_d, &samples, sizeof(int)));
+	CHECK_CUDA_CALL(cudaMemcpyToSymbol(gpu_d, &D, sizeof(int)));
 
 	//END CLOCK*****************************************
 	end = clock();
@@ -637,13 +665,13 @@ int main(int argc, char* argv[]) {
 
 		// 2. Recalculates the centroids: calculates the mean within each cluster
 		// Perform the first update step, on the points
-		update_step_points<<<dyn_grid_pts, gen_block, centroids_size>>>(gpu_data, gpu_class_map, gpu_aux_centroids, gpu_points_per_class);
+		update_step_points<<<dyn_grid_pts, gen_block, centroids_size + pointperclass_size >>>(gpu_data, gpu_class_map, gpu_aux_centroids, gpu_points_per_class);
 		CHECK_CUDA_LAST();
 
 		CHECK_CUDA_CALL(cudaDeviceSynchronize());
 
 		// Perform the second update step, on the centroids
-		update_step_centroids<<<dyn_grid_cent, gen_block>>>(gpu_aux_centroids, gpu_centroids, gpu_points_per_class, gpu_max_distance);
+		update_step_centroids<<<dyn_grid_cent, gen_block, sizeof(float)>>>(gpu_aux_centroids, gpu_centroids, gpu_points_per_class, gpu_max_distance);
 		CHECK_CUDA_LAST();
 
 		CHECK_CUDA_CALL(cudaDeviceSynchronize());
@@ -651,7 +679,7 @@ int main(int argc, char* argv[]) {
 		// Update effectively the positions and take maxDist
 		CHECK_CUDA_CALL(cudaMemcpy(&maxDist, gpu_max_distance, sizeof(float), cudaMemcpyDeviceToHost));
 		// CHECK_CUDA_CALL(cudaMemcpy(gpu_centroids, gpu_aux_centroids, K * samples * sizeof(float), cudaMemcpyDeviceToDevice));
-		CHECK_CUDA_CALL(cudaMemset(gpu_aux_centroids, 0.0, K * samples * sizeof(float)));
+		CHECK_CUDA_CALL(cudaMemset(gpu_aux_centroids, 0.0, K * D * sizeof(float)));
 		CHECK_CUDA_CALL(cudaMemset(gpu_points_per_class, 0, K * sizeof(int)));
 
 		CHECK_CUDA_CALL(cudaDeviceSynchronize());
