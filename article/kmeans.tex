@@ -378,7 +378,7 @@ The idea of the function is that CUDA tries continuously to perform an \verb|ato
 
 The function will exit only when the value in the specified address is equal to the one that the program expects to be there, before performing the atomic transaction. This is important, so that to avoid that the function overwrites any unintentional value.
 \nwl
-Especially with CUDA, a great part of the possible sppedup that an application can achieve is given by the memory accesses. One of the many possibilities that CUDA offers, that is not instead possible with CPUs (be it with multi-processing or multi-threading programming), is to \textbf{freely manage} the \textbf{L2 cache} of the GPU (also known as the shared memory). In our implementation, we made sure to use the shared memory as much as possible, and to transfer the data to the global memory only when needed. Moreover, we made sure to use most efficiently the \textbf{memory coalescing} that CUDA does whenever retrieving data from the global memory: this has been done by "transposing" the \verb|data| array. Normally, the \verb|data| array would be organized as follows:
+Especially with CUDA, a great part of the possible sppedup that an application can achieve is given by the memory accesses. One of the many possibilities that CUDA offers, that is not instead possible with CPUs (be it with multi-processing or multi-threading programming), is to \textbf{freely manage} the \textbf{L1 cache} of the GPU (also known as the shared memory). In our implementation, we made sure to use the shared memory as much as possible, and to transfer the data to the global memory only when needed. Moreover, we made sure to use most efficiently the \textbf{memory coalescing} that CUDA does whenever retrieving data from the global memory: this has been done by "transposing" the \verb|data| array. Normally, the \verb|data| array would be organized as follows:
 
 \begin{center}
     \resizebox{\linewidth}{!}{
@@ -427,23 +427,12 @@ thus having a data array where the \textbf{coordinates} are \textbf{stored dimen
     \centering
     \includegraphics[width=\linewidth]{imgs/cuda_timings_speedups.png}
     \caption{Runtimes and speedups of the CUDA application on different GPUs}
+
+
+    \label{cuda_roofline}
+    \includegraphics[width=\linewidth]{imgs/roofline.png}
+    \caption{Roofline model of the CUDA application}
 \end{figure*}
-
-As we mentioned previously, we are making use of three kernels: \verb|assignment_step| and \verb|update_step_points| and \verb|update_step_centroids|. In all kernels, all operations that act on the global memory are \textbf{performed atomically}, which avoid potential race conditions. We here show how all three kernels work.
-\nwl
-The first kernel is called on all the data, and each point is assigned to a thread. First, a preliminary check is performed, to make sure that each thread is assigned to a valid point. While the \verb|if| statement may seem like a possible cause of warp divergence, it doesn't actually impact that much. Indeed, we would only discard part of the final block of kernels, while all the previous blocks are fully used. Then, each thread will compute the $\ell_2$ norm between its assigned point and all centroids, and will store the class to which each point will be assigned into the \verb|class_int| variable, depending on which $\ell_2$ norm is the smallest. If a change from the previous class assignment is detected, the number of changes will increase.
-\nwl
-The second kernel will have a point assigned to each thread, and each thread will increment, in the \verb|points_per_class| array, the value in the position corresponding to the class assigned to the point. After that, the coordinates of the point are added to the \verb|aux_centroid| array, so that to create, on the new step, the new centroid from the average of the coordinates. Here, both the \verb|points_per_class| and \verb|aux_centroids| arrays are stored in shared memory, and only after a thread computes its contribution to the final array the result in shared memory gets copied over to the global memory (also here it is done through atomic operations, so that to avoid concurrency problems).
-\nwl
-The third kernel, \verb|update_step_centroids|, firstly ensure that all threads are mapped to a valid centroid; then all threads will compute, for each dimension of the centroids, the average coordinates of the new centroid. Once done, each thread will then perform the $\ell_2$ norm between the previous centroid and the new one, so that to compute the \verb|max_distance| variable, needed for convergence. Once again, the variable is first stored in shared memory, and it's then stored in global memory via the use of the \verb|custom_atomicMax()| function, which we illustrated previously.
-\nwl
-After executing the third kernel, the program continues repeating in loop the three kernels until one of the convergence conditions is met.
-
-\subsection{CUDA Performance analysis}
-
-The CUDA version performed as can be seen from table \ref{cuda_times}. As we mentioned in the previous section, the correct handling of the memory and exploitation of the memory bursts allows to reach high speedups of the application, as can be seen for the rows with the \textasteriskcentered$^{23}$ apex. In the table we also reported the timings and speedup of a version of the application that wasn't correctly exploiting memory coalescence: indeed, for that version the speedup is not as impactful as the speedups of the other versions. For the sake of comparison, we also sampled the performance of the application in other systems with other NVIDIA GPUs, such as an RTX 4060 (marked by \textasteriskcentered$^4$) and an RTX 5080 (marked by \textasteriskcentered$^5$); in such cases, the speedup is relative to the sequential timings obtained in the other systems.
-
-% eventuale analisi del roofline model
 
 \begin{table}
     \label{cuda_times}
@@ -480,6 +469,22 @@ The CUDA version performed as can be seen from table \ref{cuda_times}. As we men
     \textasteriskcentered$^5$: executed on a \textbf{GeForce RTX 5080}
 \end{table}
 
+As we mentioned previously, we are making use of three kernels: \verb|assignment_step|, \verb|update_step_points| and \verb|update_step_centroids|. In all kernels, all operations that act on the global memory are \textbf{performed atomically}, which avoid potential race conditions. We here show how all three kernels work.
+\nwl
+The first kernel is called on all the data, and each point is assigned to a thread. First, a preliminary check is performed, to make sure that each thread is assigned to a valid point. While the \verb|if| statement may seem like a possible cause of warp divergence, it doesn't actually impact that much. Indeed, we would only discard part of the final block of kernels, while all the previous blocks are fully used. Then, each thread will compute the $\ell_2$ norm between its assigned point and all centroids, and will store the class to which each point will be assigned into the \verb|class_int| variable, depending on which $\ell_2$ norm is the smallest. If a change from the previous class assignment is detected, the number of changes will increase.
+\nwl
+The second kernel will have a point assigned to each thread, and each thread will increment, in the \verb|points_per_class| array, the value in the position corresponding to the class assigned to the point. After that, the coordinates of the point are added to the \verb|aux_centroid| array, so that to create, on the new step, the new centroid from the average of the coordinates. Here, both the \verb|points_per_class| and \verb|aux_centroids| arrays are stored in shared memory, and only after a thread computes its contribution to the final array the result in shared memory gets copied over to the global memory (also here it is done through atomic operations, so that to avoid concurrency problems).
+\nwl
+The third kernel, \verb|update_step_centroids|, firstly ensure that all threads are mapped to a valid centroid; then all threads will compute, for each dimension of the centroids, the average coordinates of the new centroid. Once done, each thread will then perform the $\ell_2$ norm between the previous centroid and the new one, so that to compute the \verb|max_distance| variable, needed for convergence. Once again, the variable is first stored in shared memory, and it's then stored in global memory via the use of the \verb|custom_atomicMax()| function, which we illustrated previously.
+\nwl
+After executing the third kernel, the program continues repeating in loop the three kernels until one of the convergence conditions is met.
+
+\subsection{CUDA Performance analysis}
+
+The CUDA version performed as can be seen from table \ref{cuda_times}. As we mentioned in the previous section, the \textbf{correct handling} of the \textbf{memory} and \textbf{exploitation} of the \textbf{memory bursts} allows to reach high speedups of the application, as can be seen for the rows with the \textasteriskcentered$^{23}$ apex. In the table we also reported the timings and speedup of a version of the application that wasn't correctly exploiting memory coalescence: indeed, for that version the speedup is not as impactful as the speedups of the other versions. For the sake of comparison, we also sampled the performance of the application in other systems with other NVIDIA GPUs, such as an RTX 4060 (marked by \textasteriskcentered$^4$) and an RTX 5080 (marked by \textasteriskcentered$^5$); in such cases, the speedup is relative to the sequential timings obtained in the other systems.
+\nwl
+Thanks to the Nsight Compute profiler, we have also been able to carry out an analysis of the \textbf{roofline model} of our application, which has been reported in figure \href{cuda_roofline}{5}. The profiler measured the performance of the L1 and DRAM memory. From the model we can see that the application is still memory bound (both related to the L1 and DRAM memory); while the performance is still high, in order to improve the application it could be useful to perform more operations on the data, so that to move the application from the memory-bound region to the compute-bound one. Moreover, an improvement that could be made is to use more the data stored in the L1 cache; however, given the nature of the algorithm, only a few operations must be performed on the different data used (be it the array of points, the array of centroids, etc...), making it hard to increase the arithmetic intensity.
+
 \begin{figure*}
     \label{stats_mpi_omp}
     \centering
@@ -489,7 +494,7 @@ The CUDA version performed as can be seen from table \ref{cuda_times}. As we men
     \caption{Comparison of the speedup of the MPI + OpenMP program (on top) and the efficiency (on bottom), on three different input tests. Each plot compares the program on a set amount of processes}
 \end{figure*}
 
-\section{Interlacing Multi-processing with Multi-threading with MPI + OpenMP}
+\section{Interlacing Multi-processing and Multi-threading with MPI + OpenMP}
 
 So far, we implemented various solutions for our programs, which employed either multi-processing or multi-threading parallelism techniques, without using both approaches at the same time. However, these techniques are not mutually exclusive, and can be mixed together in order to achieve better performances. In fact, in high performance computing tasks, multi-process techniques are used within clusters to connect nodes and coordinate them, while multi-threading are used for performing computations, given the directives of the master process(es).
 \nwl
