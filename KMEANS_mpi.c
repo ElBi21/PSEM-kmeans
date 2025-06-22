@@ -266,8 +266,10 @@ int main(int argc, char *argv[])
 	}
 
 	// Broadcast the values of lines (data points) and samples (dimensions) to all processes
-	MPI_Bcast(&N, 1, MPI_INT, 0, MPI_COMM_WORLD);
-	MPI_Bcast(&D, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	int ND[] = {N,D};
+	MPI_Bcast(ND, 2, MPI_INT, 0, MPI_COMM_WORLD);
+	N = ND[0];
+	D = ND[1];
 
 	// Everyone gets the arguments of the program
 	int K = atoi(argv[2]);
@@ -316,8 +318,10 @@ int main(int argc, char *argv[])
 
 	// END CLOCK*****************************************
 	end = MPI_Wtime();
-	printf("\n%d |Memory allocation: %f seconds\n", rank, end - start);
-	fflush(stdout);
+	if (rank==0){
+		printf("\n%d |Memory allocation: %f seconds\n", rank, end - start);
+		fflush(stdout);
+	}
 	//**************************************************
 	// START CLOCK***************************************
 	MPI_Barrier(MPI_COMM_WORLD); // Ensure that all processes start timer at the same time
@@ -566,15 +570,15 @@ int main(int argc, char *argv[])
 	{
 		if (changes <= minChanges)
 		{
-			printf("\n\nTermination condition: Minimum number of changes reached: %d [%d]", changes, minChanges);
+			printf("\nTermination condition: Minimum number of changes reached: %d [%d]", changes, minChanges);
 		}
 		else if (it >= maxIterations)
 		{
-			printf("\n\nTermination condition: Maximum number of iterations reached: %d [%d]", it, maxIterations);
+			printf("\nTermination condition: Maximum number of iterations reached: %d [%d]", it, maxIterations);
 		}
 		else
 		{
-			printf("\n\nTermination condition: Centroid update precision reached: %g [%g]", maxDist, maxThreshold);
+			printf("\nTermination condition: Centroid update precision reached: %g [%g]", maxDist, maxThreshold);
 		}
 
 		int error = writeResult(classMap, N, argv[6]);
@@ -611,8 +615,10 @@ int main(int argc, char *argv[])
 
 	// END CLOCK*****************************************
 	end = MPI_Wtime();
-	printf("\n\n%d |Memory deallocation: %f seconds\n", rank, end - start);
-	fflush(stdout);
+	if (rank==0){
+		printf("\n\n%d |Memory deallocation: %f seconds\n", rank, end - start);
+		fflush(stdout);
+	}
 	//***************************************************/
 
 	//	FINALIZE: Clean up the MPI environment

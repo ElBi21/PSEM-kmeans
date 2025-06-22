@@ -596,8 +596,8 @@ int main(int argc, char* argv[]) {
  */
 
 	dim3 gen_block(32, 32);
-	dim3 dyn_grid_pts(pts_grid_size);
-	dim3 dyn_grid_cent(K_grid_size);
+	dim3 points_grid_size(pts_grid_size);
+	dim3 centroids_grid_size(K_grid_size);
 
 	int data_size = lines * D * sizeof(float);
 	int centroids_size = K * D * sizeof(float);
@@ -657,7 +657,7 @@ int main(int argc, char* argv[]) {
 		
 		// 1. Calculate the distance from each point to the centroid
 		// Assign each point to the nearest centroid.
-		assignment_step<<<dyn_grid_pts, gen_block, centroids_size>>>(gpu_data, gpu_centroids, gpu_class_map, gpu_changes);
+		assignment_step<<<points_grid_size, gen_block, centroids_size>>>(gpu_data, gpu_centroids, gpu_class_map, gpu_changes);
 		
 		// Write down to host the changes for checking convergence condition after waiting for GPU
 		CHECK_CUDA_CALL(cudaDeviceSynchronize());
@@ -665,13 +665,13 @@ int main(int argc, char* argv[]) {
 
 		// 2. Recalculates the centroids: calculates the mean within each cluster
 		// Perform the first update step, on the points
-		update_step_points<<<dyn_grid_pts, gen_block, centroids_size + pointperclass_size>>>(gpu_data, gpu_class_map, gpu_aux_centroids, gpu_points_per_class);
+		update_step_points<<<points_grid_size, gen_block, centroids_size + pointperclass_size>>>(gpu_data, gpu_class_map, gpu_aux_centroids, gpu_points_per_class);
 		CHECK_CUDA_LAST();
 
 		CHECK_CUDA_CALL(cudaDeviceSynchronize());
 
 		// Perform the second update step, on the centroids
-		update_step_centroids<<<dyn_grid_cent, gen_block, sizeof(float)>>>(gpu_aux_centroids, gpu_centroids, gpu_points_per_class, gpu_max_distance);
+		update_step_centroids<<<centroids_grid_size, gen_block, sizeof(float)>>>(gpu_aux_centroids, gpu_centroids, gpu_points_per_class, gpu_max_distance);
 		CHECK_CUDA_LAST();
 
 		CHECK_CUDA_CALL(cudaDeviceSynchronize());

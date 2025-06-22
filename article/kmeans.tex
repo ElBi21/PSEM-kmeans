@@ -360,7 +360,7 @@ We decided to organize the threads in two dimensional blocks of $32 \times 32$ t
 The program makes also use of a custom function, called \verb|custom_atomic_max()|. This function has been implemented because it allows us to perform an \verb|atomicMax()|-like function for \verb|float| numbers, which would not be normally possible with the built-it CUDA function. We here show the function as a whole:
 \nwl
 \begin{lstlisting}[language = C]
-__device__ float custom_atomic_max(float* value_address, float val) {
+__device__ float custom_atomicMax(float* value_address, float val) {
     int* address_as_int = (int*) value_address;
     int old = *address_as_int, assumed;
     do {
@@ -427,11 +427,6 @@ thus having a data array where the \textbf{coordinates} are \textbf{stored dimen
     \centering
     \includegraphics[width=\linewidth]{imgs/cuda_timings_speedups.png}
     \caption{Runtimes and speedups of the CUDA application on different GPUs}
-
-
-    \label{cuda_roofline}
-    \includegraphics[width=\linewidth]{imgs/roofline.png}
-    \caption{Roofline model of the CUDA application}
 \end{figure*}
 
 \begin{table}
@@ -445,33 +440,38 @@ thus having a data array where the \textbf{coordinates} are \textbf{stored dimen
             \multirow{2}{*}{\textbf{Metric}} & \multicolumn{3}{c|}{\textbf{Input tests}} \\
             \cline{2-4}\cline{2-4}
              & 20D & 100D & 100D$_2$ \\
-            \hline\hline
-            \textbf{Runtime}$^{13}$ & $0.05633 \pm 0.02272$ & $0.12794 \pm 0.03329$ & $8.46844 \pm 1.29596$ \\
-            \hline
-            \textbf{Speedup}$^{13}$ & $6.28 \times$ & $8.32 \times$ & $13.14 \times$ \\
             \hline\hline \rowcolor{lightgray!40}
-            \textbf{Runtime}$^{23}$ & $0.038851 \pm 0.00758$ & $0.03343 \pm 0.00402$ & $1.25401 \pm 0.00367$ \\
+            \textbf{Runtime}$^{1a}$ & $0.05633 \pm 0.02272$ & $0.12794 \pm 0.03329$ & $8.46844 \pm 1.29596$ \\
             \hline \rowcolor{lightgray!40}
-            \textbf{Speedup}$^{23}$ & $9.11 \times$ & $31.86 \times$ & $88.74 \times$ \\
+            \textbf{Speedup}$^{1a}$ & $6.28 \times$ & $8.32 \times$ & $13.14 \times$ \\
             \hline\hline
-            \textbf{Runtime}$^{24}$ & $0.00545 \pm 0.00006$ & $0.00993 \pm 0.00004$ & $0.50741 \pm 0.00337$ \\
+            \textbf{Runtime}$^{1b}$ & $0.038851 \pm 0.00758$ & $0.03343 \pm 0.00402$ & $1.25401 \pm 0.00367$ \\
             \hline
-            \textbf{Speedup}$^{24}$ & $35.92 \times$ & $61.9 \times$ & $126.83 \times$ \\
+            \textbf{Speedup}$^{1b}$ & $9.11 \times$ & $31.86 \times$ & $88.74 \times$ \\
+            \hline\hline
+            \textbf{Runtime}$^{2b}$ & $0.00545 \pm 0.00006$ & $0.00993 \pm 0.00004$ & $0.50741 \pm 0.00337$ \\
+            \hline
+            \textbf{Speedup}$^{2b}$ & $35.92 \times$ & $61.9 \times$ & $126.83 \times$ \\
+            \hline\hline
+            \textbf{Runtime}$^{3b}$ & $0.00522 \pm 0.00008$ & $0.00873 \pm 0.00008$ & $0.16875 \pm 0.00018$ \\
+            \hline
+            \textbf{Speedup}$^{3b}$ & $67.82 \times$ & $121.99 \times$ & $659.44 \times$ \\
             \hline
         \end{tabular}
     }
     
     \nwl
-    \textasteriskcentered$^1$: \textbf{without} a correct handling of memory coalescing\\
-    \textasteriskcentered$^2$: \textbf{with} a correct handling of memory coalescing\\
-    \textasteriskcentered$^3$: executed on an \textbf{RTX Quadro 6000}\\
-    \textasteriskcentered$^4$: executed on a \textbf{GeForce RTX 4060}\\
-    \textasteriskcentered$^5$: executed on a \textbf{GeForce RTX 5080}
+    \textasteriskcentered$^a$: \textbf{without} a correct handling of memory coalescing + \textbf{without} using the shared memory\\
+    \textasteriskcentered$^b$: \textbf{with} a correct handling of memory coalescing + \textbf{using} the shared memory
+    \nwl
+    \textasteriskcentered$^1$: executed on an \textbf{RTX Quadro 6000}\\
+    \textasteriskcentered$^2$: executed on a \textbf{GeForce RTX 4060}\\
+    \textasteriskcentered$^3$: executed on a \textbf{GeForce RTX 5080}
 \end{table}
 
 As we mentioned previously, we are making use of three kernels: \verb|assignment_step|, \verb|update_step_points| and \verb|update_step_centroids|. In all kernels, all operations that act on the global memory are \textbf{performed atomically}, which avoid potential race conditions. We here show how all three kernels work.
 \nwl
-The first kernel is called on all the data, and each point is assigned to a thread. First, a preliminary check is performed, to make sure that each thread is assigned to a valid point. While the \verb|if| statement may seem like a possible cause of warp divergence, it doesn't actually impact that much. Indeed, we would only discard part of the final block of kernels, while all the previous blocks are fully used. Then, each thread will compute the $\ell_2$ norm between its assigned point and all centroids, and will store the class to which each point will be assigned into the \verb|class_int| variable, depending on which $\ell_2$ norm is the smallest. If a change from the previous class assignment is detected, the number of changes will increase.
+The first kernel is called on all the data, and each point is assigned to a thread. In this kernel, the centroids are stored in the shared memory. First, a preliminary check is performed, to make sure that each thread is assigned to a valid point. While the \verb|if| statement may seem like a possible cause of warp divergence, it doesn't actually impact that much. Indeed, we would only discard part of the final block of kernels, while all the previous blocks are fully used. Then, each thread will compute the $\ell_2$ norm between its assigned point and all centroids, and will store the class to which each point will be assigned into the \verb|class_int| variable, depending on which $\ell_2$ norm is the smallest. If a change from the previous class assignment is detected, the number of changes will increase.
 \nwl
 The second kernel will have a point assigned to each thread, and each thread will increment, in the \verb|points_per_class| array, the value in the position corresponding to the class assigned to the point. After that, the coordinates of the point are added to the \verb|aux_centroid| array, so that to create, on the new step, the new centroid from the average of the coordinates. Here, both the \verb|points_per_class| and \verb|aux_centroids| arrays are stored in shared memory, and only after a thread computes its contribution to the final array the result in shared memory gets copied over to the global memory (also here it is done through atomic operations, so that to avoid concurrency problems).
 \nwl
@@ -481,11 +481,17 @@ After executing the third kernel, the program continues repeating in loop the th
 
 \subsection{CUDA Performance analysis}
 
-The CUDA version performed as can be seen from table \ref{cuda_times} (where both runtime and speedup are reported). As we mentioned in the previous section, the \textbf{correct handling} of the \textbf{memory} and \textbf{exploitation} of the \textbf{memory bursts} allows to reach high speedups of the application, as can be seen for the rows with the \textasteriskcentered$^{23}$ apex. In the table we also reported the timings and speedup of a version of the application that wasn't correctly exploiting memory coalescence: indeed, for that version the speedup is not as impactful as the speedups of the other versions.
+The CUDA version performed as can be seen from table \ref{cuda_times} (where both runtime and speedup are reported). As we mentioned in the previous section, the \textbf{correct handling} of the \textbf{memory} and \textbf{exploitation} of the \textbf{memory bursts} allows to reach high speedups of the application: the difference can be seen for the rows with the \textasteriskcentered$^{1a}$ and \textasteriskcentered$^{1b}$ apices (the former denotes a version of the application that doesn't handle memory correctly, the latter instead does). We can see that, on the same system, a correct memory handling could grant, with this application, an improvement on the speedup of $\sim 76 \times$.
 \nwl
-For the sake of comparison, we also sampled the performance of the application in other systems with other NVIDIA GPUs, such as an RTX 4060 (marked by \textasteriskcentered$^4$) and an RTX 5080 (marked by \textasteriskcentered$^5$); in such cases, the speedup is relative to the sequential timings obtained on the cluster mentioned in section \textit{1.C}. However, the speedup alone is not a very powerful descriptor of the CUDA application: indeed, as we can see, the speedup varies greatly depending on the GPU is has been executed on, reaching numbers such as the ones indicated on the figure.
+We will show however that the speedup is \textbf{not} the \textbf{most impactful statistic} for determining the performance of a CUDA application: in order to show this, we also sampled the performance of the application in other systems with other NVIDIA GPUs, such as an RTX 4060 (marked by \textasteriskcentered$^2$) and an RTX 5080 (marked by \textasteriskcentered$^3$). In such cases, the speedup reported is relative to the sequential timings obtained on the cluster mentioned in section \textit{1.C}. The reason why we compared the CUDA timings to a single sequential version is to simulate how the code would run if we just changed the GPU and left the rest of the system intact (of course, the test would be appropriate if we could directly change the hardware on the cluster, but this wasn't a possibility). The table shows moreover how the speedup varies greatly depending on the GPU is has been executed on, reaching higher numbers on newer architectures. This can also be better seen from figure \ref{cuda_runtimes_speedups}.
 \nwl
-In order to better analyze the application, we carried out,thanks to the Nsight Compute profiler, an analysis of the \textbf{roofline model} of our application, which has been reported in figure \href{cuda_roofline}{5}. The profiler measured the performance of the L1 and DRAM memory. From the model we can see that the application is still memory bound (both related to the L1 and DRAM memory); while the performance is still high, in order to improve the application it could be useful to perform more operations on the data, so that to move the application from the memory-bound region to the compute-bound one. Moreover, an improvement that could be made is to use more the data stored in the L1 cache; however, given the nature of the algorithm, only a few operations must be performed on the different data used (be it the array of points, the array of centroids, etc...), making it hard to increase the arithmetic intensity.
+In order to better analyze the application, we carried out, thanks to the Nsight Compute profiler, an analysis of the \textbf{roofline model} of our application, which has been reported in figure \ref{cuda_roofline}. We were only able to retrieve the roofline model from the systems with the RTX 4060 and 5080 GPUs. The profiler measured the performance of the L1 and VRAM memory. From the model we can see that the application is still memory bound (both related to the L1 and VRAM memory) with both GPUs; while the performance is still high, in order to improve the application it could be useful to perform more operations on the data, so that to move the application from the memory-bound region to the compute-bound one. Moreover, an improvement that could be made is to use more the data stored in the L1 cache; however, given the nature of the algorithm, only a few operations are performed on the different data used (be it the array of points, the array of centroids, etc...), so it becomes hard to increase the arithmetic intensity without drastically changing the algorithm.
+
+\begin{figure*}
+    \label{cuda_roofline}
+    \includegraphics[width=\linewidth]{imgs/roofline.png}
+    \caption{Roofline model of the CUDA application on an RTX 4060 GPU (on top) and on a RTX 5080 GPU (on bottom)}
+\end{figure*}
 
 \begin{figure*}
     \label{stats_mpi_omp}
