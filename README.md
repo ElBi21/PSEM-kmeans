@@ -1,13 +1,9 @@
 <h1 align="center">PSEM • k-means</h1>
-<p align="center">🖥️ Repository for the project of the Programmazione di Sistemi Embedded e Multicore course @ Sapienza (2024/25)</p>
+<p align="center">🖥️ Repository for the project of the Programmazione di Sistemi Embedded e Multicore course @ Sapienza (2024/25)<br>Made by <a href="https://github.com/ElBi21">@ElBi21</a> and <a href="https://github.com/r0mania">@r0mania</a></p>
 
 ---
 
-Project made by [@ElBi21](https://github.com/ElBi21) and [@r0mania](https://github.com/r0mania) for the Programmazione di Sistemi Embedded e Multicore course at Sapienza University of Rome during the academic year 2024/25
-
----
-
-<h3 align="center">Read the report <a href="https://github.com/ElBi21/PSEM-kmeans/blob/main/article/kmeans.pdf">here</a></h3>
+<h3 align="center"><a href="https://github.com/ElBi21/PSEM-kmeans/blob/main/article/kmeans.pdf">→ Read the report here ←</a></h3>
 
 ---
 
